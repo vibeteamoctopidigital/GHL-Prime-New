@@ -1,0 +1,24 @@
+# Files not uploaded to the Vercel build.
+#
+# NOTE: this runs BEFORE the build, so anything the build needs must stay —
+# src/, prisma/, api/, package.json and the tsconfigs are all required.
+
+# Secrets: Vercel environment variables supply these.
+.env
+.env.*
+!.env.example
+
+# Rebuilt on Vercel; uploading a local build would only risk shipping a stale one.
+dist
+
+# Not needed to build or run.
+node_modules
+docs
+scripts
+.git
+*.log
+logs
+.vscode
+.idea
+.DS_Store
+Thumbs.db

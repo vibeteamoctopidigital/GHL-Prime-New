@@ -1,0 +1,471 @@
+// ---------------------------------------------------------------------------
+// GHL Prime — Prisma schema (PostgreSQL)
+//
+// Ported 1:1 from the previous Supabase SQL schemas. Table and column names are
+// preserved via @@map/@map so the existing database rows keep working, while the
+// application layer uses idiomatic camelCase.
+//
+// Supabase RLS policies are intentionally NOT ported: authorization is now
+// enforced in the API layer (JWT + role middleware), which is the correct place
+// for it once the client no longer talks to the database directly.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+  // "native" covers local development; the rhel target is the query engine
+  // Vercel's Node runtime (Amazon Linux, OpenSSL 3) needs. Without it the
+  // deployed function fails at the first query with a missing-engine error.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Auth — replaces Supabase Auth
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  fullName     String?   @map("full_name")
+  role         UserRole  @default(EDITOR)
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  refreshTokens RefreshToken[]
+  mediaAssets   MediaAsset[]
+
+  @@index([email])
+  @@map("users")
+}
+
+/// Refresh tokens are stored hashed so a database leak cannot be replayed.
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  userId    String    @map("user_id") @db.Uuid
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  userAgent String?   @map("user_agent")
+  ipAddress String?   @map("ip_address")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Case studies
+// ---------------------------------------------------------------------------
+
+model CaseStudy {
+  id        String   @id @default(uuid()) @db.Uuid
+  slug      String   @unique
+  title     String
+  category  String
+  subtitle  String?
+  challenge String?
+  solution  String?
+  outcome   String?
+  excerpt   String?
+  image     String?
+  accent    String?  @default("emerald")
+  body      Json?    @default("[]")
+  featured  Boolean? @default(false)
+  published Boolean? @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  assignedTeamMembers CaseStudyTeamMember[]
+
+  @@index([slug])
+  @@index([category])
+  @@index([published])
+  @@map("case_studies")
+}
+
+/// Join table: which team members worked on which case study.
+model CaseStudyTeamMember {
+  id           String   @id @default(uuid()) @db.Uuid
+  caseStudyId  String   @map("case_study_id") @db.Uuid
+  teamMemberId String   @map("team_member_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  caseStudy  CaseStudy  @relation(fields: [caseStudyId], references: [id], onDelete: Cascade)
+  teamMember TeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([caseStudyId, teamMemberId])
+  @@index([caseStudyId])
+  @@index([teamMemberId])
+  @@map("case_study_team_members")
+}
+
+// ---------------------------------------------------------------------------
+// Team
+// ---------------------------------------------------------------------------
+
+/// Leadership profiles (/team "Leaders" tab, admin: /admin/leaders).
+model TeamMember {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  role         String
+  description  String?
+  imageUrl     String?  @map("image_url")
+  sortOrder    Int      @default(999) @map("sort_order")
+  linkedinUrl  String?  @map("linkedin_url")
+  facebookUrl  String?  @map("facebook_url")
+  instagramUrl String?  @map("instagram_url")
+  twitterUrl   String?  @map("twitter_url")
+  upworkUrl    String?  @map("upwork_url")
+  websiteUrl   String?  @map("website_url")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  caseStudyAssignments CaseStudyTeamMember[]
+
+  @@index([sortOrder])
+  @@map("team_members")
+}
+
+/// "Meet The Experts" profiles (admin: /admin/experts). Separate, lighter shape
+/// than TeamMember — the frontend reads it from `team_page_members`.
+model TeamPageMember {
+  id   String @id @default(uuid()) @db.Uuid
+  name String
+  // NOT NULL in the live table, and every existing row has both. Modelled as
+  // required so the API rejects an incomplete expert up front, rather than
+  // letting Postgres reject it as an opaque 400 after the round trip.
+  title    String
+  imageUrl String @map("image_url")
+  sortOrder Int      @default(999) @map("sort_order")
+  published Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([sortOrder])
+  @@map("team_page_members")
+}
+
+// ---------------------------------------------------------------------------
+// Blog
+// ---------------------------------------------------------------------------
+
+model BlogPost {
+  id             String    @id @default(uuid()) @db.Uuid
+  slug           String    @unique
+  title          String
+  category       String
+  tags           String[]  @default([])
+  author         String?   @default("GHL Prime Team")
+  excerpt        String?
+  coverImage     String?   @map("cover_image")
+  readingTime    Int?      @map("reading_time")
+  content        String?
+  seoTitle       String?   @map("seo_title")
+  seoDescription String?   @map("seo_description")
+  seoKeywords    String?   @map("seo_keywords")
+  featured       Boolean?  @default(false)
+  published      Boolean?  @default(false)
+  publishedAt    DateTime? @map("published_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([slug])
+  @@index([category])
+  @@index([publishedAt(sort: Desc)])
+  @@map("blog_posts")
+}
+
+// ---------------------------------------------------------------------------
+// Logos
+// ---------------------------------------------------------------------------
+
+/// "Trusted by" partner logos. The live column is `company_name`; the API
+/// serializer exposes it as both `name` and `company_name` for compatibility.
+model PartnerLogo {
+  id          String   @id @default(uuid()) @db.Uuid
+  companyName String   @map("company_name")
+  imageUrl    String?  @map("image_url")
+  websiteUrl  String?  @map("website_url")
+  sortOrder   Int      @default(999) @map("sort_order")
+  published   Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([sortOrder])
+  @@map("partner_logos")
+}
+
+model TechnologyLogo {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  imageUrl  String   @map("image_url")
+  sortOrder Int      @default(999) @map("sort_order")
+  published Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([sortOrder])
+  @@map("technology_logos")
+}
+
+// ---------------------------------------------------------------------------
+// Galleries
+// ---------------------------------------------------------------------------
+
+/// Homepage "meeting" strip — a flat, ordered image list.
+model MeetingGalleryItem {
+  id        String   @id @default(uuid()) @db.Uuid
+  title     String?
+  imageUrl  String   @map("image_url")
+  sortOrder Int      @default(999) @map("sort_order")
+  published Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([sortOrder])
+  @@map("meeting_gallery")
+}
+
+/// /gallery filter tabs.
+model GalleryCategory {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  sortOrder Int      @default(999) @map("sort_order")
+  published Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  images GalleryImage[]
+
+  @@index([sortOrder])
+  @@map("gallery_categories")
+}
+
+model GalleryImage {
+  id         String   @id @default(uuid()) @db.Uuid
+  title      String?
+  imageUrl   String   @map("image_url")
+  categoryId String?  @map("category_id") @db.Uuid
+  sortOrder  Int      @default(999) @map("sort_order")
+  published  Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  category GalleryCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([sortOrder])
+  @@index([categoryId])
+  @@map("gallery_images")
+}
+
+// ---------------------------------------------------------------------------
+// "Shipped Evidence" showcase
+// ---------------------------------------------------------------------------
+
+model ShowcaseItem {
+  id                    String   @id @default(uuid()) @db.Uuid
+  originName            String   @map("origin_name")
+  originUrl             String?  @map("origin_url")
+  originIcon            String?  @map("origin_icon")
+  originDescription     String?  @map("origin_description")
+  originTagline         String?  @map("origin_tagline")
+  adaptationBadge       String?  @default("Enterprise Adaptation") @map("adaptation_badge")
+  adaptationName        String   @map("adaptation_name")
+  adaptationDescription String?  @map("adaptation_description")
+  adaptationTags        Json?    @default("[]") @map("adaptation_tags")
+  sortOrder             Int      @default(999) @map("sort_order")
+  published             Boolean  @default(true)
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  placements ShowcasePlacement[]
+
+  @@index([sortOrder])
+  @@map("showcase_items")
+}
+
+model ShowcaseStat {
+  id        String   @id @default(uuid()) @db.Uuid
+  value     String
+  label     String
+  sortOrder Int      @default(999) @map("sort_order")
+  published Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([sortOrder])
+  @@map("showcase_stats")
+}
+
+/// Which showcase item appears on which page ("home", "service:<slug>"), and in
+/// what order.
+model ShowcasePlacement {
+  id        String   @id @default(uuid()) @db.Uuid
+  itemId    String   @map("item_id") @db.Uuid
+  pageKey   String   @map("page_key")
+  sortOrder Int      @default(999) @map("sort_order")
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  item ShowcaseItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, pageKey])
+  @@index([pageKey])
+  @@map("showcase_placements")
+}
+
+// ---------------------------------------------------------------------------
+// Contact
+// ---------------------------------------------------------------------------
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  WON
+  LOST
+  ARCHIVED
+}
+
+// ---------------------------------------------------------------------------
+// Media
+// ---------------------------------------------------------------------------
+
+/**
+ * An image uploaded from local storage to Cloudinary.
+ *
+ * The content tables store a plain `image_url` string, so this is not a foreign
+ * key — it is a record of what was uploaded, so the admin panel can offer a
+ * media library and so a delete can also remove the remote asset instead of
+ * orphaning it in Cloudinary.
+ */
+model MediaAsset {
+  id        String @id @default(uuid()) @db.Uuid
+  /** Cloudinary public_id — the handle needed to transform or destroy it. */
+  publicId  String @unique @map("public_id")
+  url       String
+  secureUrl String @map("secure_url")
+
+  format       String?
+  resourceType String? @map("resource_type")
+  width        Int?
+  height       Int?
+  bytes        Int?
+  folder       String?
+
+  originalFilename String? @map("original_filename")
+  /** Free-text label so the media library is browsable. */
+  alt  String?
+  tags String[] @default([])
+
+  uploadedById String? @map("uploaded_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  uploadedBy User? @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([folder])
+  @@map("media_assets")
+}
+
+/**
+ * Contact-page submissions.
+ *
+ * The first six columns are the original Supabase shape. The rest capture the
+ * qualifying answers the multi-step ContactPage form actually collects — it
+ * posted them straight to the CRM webhook, so they were never stored anywhere.
+ */
+model ContactLead {
+  id      String  @id @default(uuid()) @db.Uuid
+  fullName String? @map("full_name")
+  email   String?
+  phone   String?
+  company String?
+  message String?
+  source  String?
+
+  country          String?
+  role             String?
+  ghlSituation     String?    @map("ghl_situation")
+  clientVolume     String?    @map("client_volume")
+  monthlyBudget    String?    @map("monthly_budget")
+  timeline         String?
+  biggestChallenge String?    @map("biggest_challenge")
+  pageUrl          String?    @map("page_url")
+  status           LeadStatus @default(NEW)
+  notes            String?
+
+  submittedAt DateTime @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([email])
+  @@index([status])
+  @@index([submittedAt(sort: Desc)])
+  @@map("contact_leads")
+}
+
+/**
+ * Service-page survey submissions (ServiceSurveyForm.jsx).
+ *
+ * These were posted directly to the CRM webhook and never persisted, so every
+ * qualified lead from a /services/* page was invisible to the admin panel.
+ */
+model ServiceSurvey {
+  id       String  @id @default(uuid()) @db.Uuid
+  name     String?
+  email    String?
+  phone    String?
+  business String?
+
+  /** Which /services/* form produced this submission. */
+  service String?
+  source  String?
+
+  role         String?
+  businessType String? @map("business_type")
+  stage        String?
+  appType      String? @map("app_type")
+
+  needs       String?
+  budget      String?
+  subAccounts String? @map("sub_accounts")
+  leadVolume  String? @map("lead_volume")
+  coverage    String?
+
+  /** Human-readable transcript of every answered question. */
+  details String?
+  pageUrl String? @map("page_url")
+
+  status LeadStatus @default(NEW)
+  notes  String?
+
+  submittedAt DateTime @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([email])
+  @@index([service])
+  @@index([status])
+  @@index([submittedAt(sort: Desc)])
+  @@map("service_surveys")
+}
