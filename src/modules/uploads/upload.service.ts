@@ -73,12 +73,12 @@ class UploadService extends BaseService {
   }
 
   /**
-   * Streams an in-memory buffer to Cloudinary.
+   * Streams an in-memory buffer to Cloudinary using a SIGNED upload.
    *
    * `upload_stream` is used rather than a base64 data URI so a large file is
    * not duplicated in memory as a ~33%-larger string.
    */
-  private uploadBuffer(buffer: Buffer, options: UploadApiOptions): Promise<UploadApiResponse> {
+  private uploadSigned(buffer: Buffer, options: UploadApiOptions): Promise<UploadApiResponse> {
     const cloudinary = getCloudinary()
     if (!cloudinary) throw notConfigured()
 
@@ -99,20 +99,75 @@ class UploadService extends BaseService {
     })
   }
 
+  /**
+   * Uploads through an UNSIGNED upload preset.
+   *
+   * Some product environments deny API keys the `create` action, which blocks
+   * every signed upload no matter how the request is built. An unsigned preset
+   * is authorised by the preset itself rather than the key, so it still works.
+   * That is why CLOUDINARY_UPLOAD_PRESET takes priority when it is set.
+   *
+   * Unsigned uploads only honour the parameters the preset allows — notably the
+   * destination folder comes from the preset's own "Asset folder" setting, so a
+   * per-request `folder` is accepted but may be ignored by Cloudinary.
+   */
+  private async uploadUnsigned(
+    buffer: Buffer,
+    { folder, tags, filename }: { folder: string; tags?: string[] | undefined; filename?: string | undefined },
+  ): Promise<UploadApiResponse> {
+    const form = new FormData()
+    form.append('file', new Blob([new Uint8Array(buffer)]), filename ?? 'upload')
+    form.append('upload_preset', env.CLOUDINARY_UPLOAD_PRESET)
+    if (folder) form.append('folder', folder)
+    if (tags?.length) form.append('tags', tags.join(','))
+
+    let response: Response
+    try {
+      response = await fetch(`https://api.cloudinary.com/v1_1/${env.CLOUDINARY_CLOUD_NAME}/image/upload`, {
+        method: 'POST',
+        body: form,
+        signal: AbortSignal.timeout(60_000),
+      })
+    } catch (error) {
+      throw ApiError.badGateway(`Could not reach Cloudinary: ${error instanceof Error ? error.message : 'network error'}`)
+    }
+
+    const payload = (await response.json().catch(() => null)) as (UploadApiResponse & { error?: { message: string } }) | null
+
+    if (!response.ok || !payload || payload.error) {
+      const detail = payload?.error?.message ?? `HTTP ${response.status}`
+
+      if (/preset not found/i.test(detail)) {
+        throw ApiError.badGateway(
+          `Cloudinary upload preset "${env.CLOUDINARY_UPLOAD_PRESET}" was not found. ` +
+            'Create it under Settings → Upload presets with Signing mode = Unsigned, ' +
+            'or clear CLOUDINARY_UPLOAD_PRESET to use signed uploads.',
+          { code: 'CLOUDINARY_PRESET_NOT_FOUND' },
+        )
+      }
+
+      throw ApiError.badGateway(`Cloudinary upload failed: ${detail}`, { code: 'CLOUDINARY_UPLOAD_FAILED' })
+    }
+
+    return payload
+  }
+
   /** Uploads one image and records it in `media_assets`. */
   async uploadImage(file: UploadInput, options: UploadOptions = {}): Promise<SerializedRow> {
     if (!this.isConfigured) throw notConfigured()
 
     const folder = options.folder?.trim() || env.CLOUDINARY_UPLOAD_FOLDER
 
-    const result = await this.uploadBuffer(file.buffer, {
-      folder,
-      resource_type: 'image',
-      // Let Cloudinary pick the best codec/quality per requesting browser.
-      fetch_format: 'auto',
-      quality: 'auto',
-      ...(options.tags?.length ? { tags: options.tags } : {}),
-    })
+    const result = env.hasUploadPreset
+      ? await this.uploadUnsigned(file.buffer, { folder, tags: options.tags, filename: file.originalName })
+      : await this.uploadSigned(file.buffer, {
+          folder,
+          resource_type: 'image',
+          // Let Cloudinary pick the best codec/quality per requesting browser.
+          fetch_format: 'auto',
+          quality: 'auto',
+          ...(options.tags?.length ? { tags: options.tags } : {}),
+        })
 
     const record = {
       url: result.url,
@@ -177,29 +232,51 @@ class UploadService extends BaseService {
   }
 
   /**
-   * Removes the remote asset first, then the local record — so a Cloudinary
-   * failure leaves the row in place rather than silently orphaning the file.
+   * Removes the media record, and the remote asset when the account allows it.
+   *
+   * Deleting from Cloudinary needs the `delete` action, which some product
+   * environments withhold even while unsigned uploads are permitted. Refusing
+   * to remove the local record in that case would make the media library
+   * un-prunable, so the row is always removed and the response reports whether
+   * the remote file actually went with it.
    */
-  async destroyByPublicId(publicId: string): Promise<{ public_id: string; deleted: true }> {
+  async destroyByPublicId(publicId: string): Promise<{ public_id: string; deleted: true; remote_deleted: boolean; remote_error?: string }> {
     const cloudinary = getCloudinary()
     if (!cloudinary) throw notConfigured()
 
-    const result = (await cloudinary.uploader.destroy(publicId, { resource_type: 'image' })) as { result?: string }
+    let remoteDeleted = false
+    let remoteError: string | undefined
 
-    // 'not found' is fine — the goal is that it no longer exists.
-    if (result.result !== 'ok' && result.result !== 'not found') {
-      throw ApiError.badGateway(`Cloudinary delete failed: ${result.result ?? 'unknown error'}`)
+    try {
+      const result = (await cloudinary.uploader.destroy(publicId, { resource_type: 'image' })) as { result?: string }
+
+      // 'not found' is fine — the goal is that it no longer exists.
+      remoteDeleted = result.result === 'ok' || result.result === 'not found'
+      if (!remoteDeleted) remoteError = result.result ?? 'unknown error'
+    } catch (error) {
+      const raw = error as { http_code?: number; message?: string; error?: { message?: string } }
+      remoteError = raw?.error?.message ?? raw?.message ?? 'unknown error'
+    }
+
+    if (!remoteDeleted) {
+      logger.warn(`Cloudinary asset ${publicId} could not be deleted (${remoteError}); removing the local record anyway`)
     }
 
     const { error: deleteError } = await supabase.from('media_assets').delete().eq('public_id', publicId)
     if (deleteError) this.fail('Could not remove the media record', deleteError)
 
-    logger.info(`Deleted image ${publicId}`)
-    return { public_id: publicId, deleted: true }
+    logger.info(`Deleted image ${publicId}${remoteDeleted ? '' : ' (local record only)'}`)
+
+    return {
+      public_id: publicId,
+      deleted: true,
+      remote_deleted: remoteDeleted,
+      ...(remoteError ? { remote_error: remoteError } : {}),
+    }
   }
 
   /** Deletes by our own record id, resolving the public_id first. */
-  async destroyById(id: string): Promise<{ public_id: string; deleted: true }> {
+  async destroyById(id: string): Promise<{ public_id: string; deleted: true; remote_deleted: boolean; remote_error?: string }> {
     const asset = await this.findByIdOrFail(id)
     return this.destroyByPublicId(asset['public_id'] as string)
   }
@@ -238,9 +315,10 @@ class UploadService extends BaseService {
   }
 
   /** What the admin UI needs to render (or disable) its file picker. */
-  status(): { configured: boolean; folder: string; max_file_size_mb: number; max_files: number } {
+  status(): { configured: boolean; mode: string; folder: string; max_file_size_mb: number; max_files: number } {
     return {
       configured: this.isConfigured,
+      mode: env.hasUploadPreset ? `unsigned (preset: ${env.CLOUDINARY_UPLOAD_PRESET})` : 'signed',
       folder: env.CLOUDINARY_UPLOAD_FOLDER,
       max_file_size_mb: env.effectiveMaxUploadMb,
       max_files: env.MAX_UPLOAD_FILES,

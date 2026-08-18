@@ -75,6 +75,12 @@ const envSchema = z.object({
   /** Alternative single-string form: cloudinary://key:secret@cloud_name */
   CLOUDINARY_URL: z.string().optional().default(''),
   CLOUDINARY_UPLOAD_FOLDER: z.string().default('ghlprime'),
+  /**
+   * Unsigned upload preset name. When set, uploads go through the unsigned
+   * endpoint instead of a signed one — the only path that works on a product
+   * environment whose keys are denied the \ action.
+   */
+  CLOUDINARY_UPLOAD_PRESET: z.string().optional().default(''),
   MAX_UPLOAD_SIZE_MB: z.coerce.number().positive().max(100).default(10),
   MAX_UPLOAD_FILES: z.coerce.number().int().positive().max(50).default(10),
 
@@ -126,6 +132,8 @@ export interface AppEnv extends RawEnv {
   sitemapOutputDir: string
   /** True once Cloudinary credentials are present, in either supported form. */
   hasCloudinary: boolean
+  /** True when an unsigned upload preset is configured. */
+  hasUploadPreset: boolean
   /** The limit actually enforced — clamped below the platform cap on serverless. */
   effectiveMaxUploadMb: number
   maxUploadBytes: number
@@ -170,6 +178,7 @@ export const env: AppEnv = {
     ? raw.SITEMAP_OUTPUT_DIR
     : path.resolve(ROOT_DIR, raw.SITEMAP_OUTPUT_DIR),
   hasCloudinary,
+  hasUploadPreset: Boolean(raw.CLOUDINARY_UPLOAD_PRESET),
   effectiveMaxUploadMb,
   maxUploadBytes: Math.round(effectiveMaxUploadMb * 1024 * 1024),
   isServerless,
