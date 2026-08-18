@@ -1,196 +1,99 @@
-# Using Supabase as the database
+# Supabase notes
 
-This backend is database-agnostic Postgres — moving from Neon to Supabase is a
-connection-string change plus one security script. No application code changes.
+The API uses Supabase purely as a **PostgreSQL database, accessed over PostgREST**
+with `@supabase/supabase-js`. There is no ORM, no connection string and no
+connection pool.
 
-> **What Supabase hosts:** the PostgreSQL database. It does **not** host Node or
-> Express apps (its Edge Functions are Deno). The API itself still runs on
-> Vercel — see [DEPLOYMENT.md](DEPLOYMENT.md). Supabase Auth, Storage and the
-> Supabase JS client are all unused: authentication is JWT in the API layer, and
-> images go to Cloudinary.
+Supabase Auth, Supabase Storage and the browser client are all unused: this API
+issues its own JWTs, and images go to Cloudinary.
 
 ---
 
-## 1. Create the project
+## Configuration
 
-1. [database.new](https://database.new) → new project.
-2. Save the database password — Supabase shows it once.
-3. Pick the region closest to your Vercel deployment region; every query pays
-   that round trip.
+Two variables, both from **Dashboard → Project Settings → API**:
 
-## 2. Get the connection strings
+```
+SUPABASE_URL=https://<project>.supabase.co
+SUPABASE_SECRET_KEY=sb_secret_…
+```
 
-Dashboard → **Connect** (or *Project Settings → Database → Connection string*).
-You need two, and they are not interchangeable:
+The secret (service-role) key bypasses RLS. That is correct here because
+authorisation lives in this API's JWT + role middleware, and the key never leaves
+the server. **Never expose it to a browser.**
 
-| Purpose | Which one | Port |
-|---|---|---|
-| `DATABASE_URL` — the API at runtime | **Transaction pooler** | `6543` |
-| `DIRECT_URL` — `prisma db push` / `migrate` only | **Session pooler** | `5432` |
+Verify with:
 
 ```bash
-# DATABASE_URL — note the two query parameters, both required
-postgresql://postgres.[REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1
-
-# DIRECT_URL
-postgresql://postgres.[REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:5432/postgres
-```
-
-**Why `pgbouncer=true` is mandatory.** The transaction pooler hands your
-connection to a different backend between statements, so it cannot hold prepared
-statements. Prisma uses them by default. Without this flag you get intermittent,
-maddening `prepared statement "s0" already exists` errors under load — the kind
-that pass every local test and only appear in production.
-
-**Why `DIRECT_URL` cannot use 6543.** Migrations need a real session (advisory
-locks, DDL transactions). The transaction pooler cannot provide one.
-
-URL-encode special characters in the password: `@` → `%40`, `#` → `%23`,
-`$` → `%24`, `&` → `%26`.
-
-## 3. Configure `.env`
-
-The complete list is in [`.env.supabase.example`](../.env.supabase.example) —
-copy it and fill in the blanks. The essentials:
-
-```bash
-DATABASE_URL="postgresql://postgres.[REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1"
-DIRECT_URL="postgresql://postgres.[REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:5432/postgres"
-```
-
-> You do **not** need `SUPABASE_URL`, `SUPABASE_ANON_KEY` or
-> `SUPABASE_SERVICE_ROLE_KEY`. This backend speaks Postgres directly through
-> Prisma. Those keys only open access paths that step 5 deliberately closes.
-
-## 4. Create the tables
-
-```bash
-cd backend
-npx prisma db push     # creates all 18 tables
-npm run db:seed        # admin user + content (idempotent)
-```
-
-`db:seed` upserts on natural keys, so re-running converges rather than
-duplicating.
-
-## 5. Close the PostgREST door — do not skip this
-
-Supabase automatically publishes **every table in the `public` schema** through
-PostgREST at `https://<ref>.supabase.co/rest/v1/`, authorised by the `anon` API
-key — which is public by design and ships inside frontend bundles.
-
-This backend removed RLS when it replaced Supabase Auth; authorisation now lives
-in the API layer. That is correct for traffic through the API, but it means the
-PostgREST door must be shut explicitly. Otherwise anyone with the anon key can
-read `contact_leads` and `service_surveys` (lead PII) or `users` (password
-hashes) directly, bypassing every check the API makes.
-
-**Run [`prisma/supabase-setup.sql`](../prisma/supabase-setup.sql) once** in the
-Supabase SQL Editor. It revokes `anon`/`authenticated` grants, enables RLS with
-no policies as a second line of defence, and sets default privileges so tables
-created by a future `prisma db push` are locked down automatically.
-
-Your API is unaffected: it connects as the table owner, which bypasses RLS.
-
-## 6. Verify
-
-```bash
-npm run db:check
-```
-
-Validates both URLs, proves connectivity, confirms all 18 tables, reports row
-counts, and — on Supabase — checks that no `anon`/`authenticated` grants remain:
-
-```
-═══ Supabase exposure check ═══
-  ✓ no anon/authenticated grants — PostgREST cannot reach these tables
-  ✓ row level security enabled on every table (defence in depth)
-```
-
-If it reports tables still readable, step 5 did not run.
-
----
-
-## Moving existing data from Neon
-
-`npm run db:seed` recreates content that comes from the frontend data modules,
-but **not** rows created since — contact leads, service surveys and uploaded
-media records exist only in the database. Copy those across rather than losing
-them.
-
-```bash
-# 1. Dump the Neon database (schema + data), excluding owner/ACL noise
-pg_dump "postgresql://<neon-direct-url>" \
-  --no-owner --no-privileges --clean --if-exists \
-  -f ghlprime-backup.sql
-
-# 2. Restore into Supabase over the SESSION pooler (port 5432, not 6543)
-psql "postgresql://postgres.[REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:5432/postgres" \
-  -f ghlprime-backup.sql
-
-# 3. Re-run the hardening script — a restore re-creates tables with
-#    Supabase's permissive default grants
-#    (paste prisma/supabase-setup.sql into the SQL Editor)
-
-# 4. Confirm
-npm run db:check
-```
-
-`pg_dump` must be version 15+ to match Supabase's server. If yours is older,
-`npx prisma db push` followed by `npm run db:seed` gets you a working database
-without the accumulated leads.
-
-To copy only the lead tables, add
-`--table=contact_leads --table=service_surveys --table=media_assets --data-only`
-to the dump.
-
----
-
-## Deploying with Vercel
-
-Set the same two variables in **Vercel → Settings → Environment Variables**,
-alongside the rest from [DEPLOYMENT.md](DEPLOYMENT.md) §3.
-
-The transaction pooler matters more on Vercel than locally: each serverless
-instance opens its own connection, and a direct connection would exhaust the
-limit under traffic. `connection_limit=1` plus the pooler is the combination
-that holds up.
-
-Migrations still run from your machine — Vercel does not run them:
-
-```bash
-DATABASE_URL="<pooler-6543>" DIRECT_URL="<session-5432>" npx prisma db push
+curl http://localhost:4000/api/health/db
 ```
 
 ---
 
-## Troubleshooting
+## Schema
 
-| Symptom | Cause and fix |
-|---|---|
-| `prepared statement "s0" already exists` | `pgbouncer=true` missing from `DATABASE_URL`. Add it. |
-| `Can't reach database server` from your machine | The direct host (`db.<ref>.supabase.co`) is IPv6-only on newer projects. Use the **session pooler** host for `DIRECT_URL`. |
-| `db push` hangs or errors on advisory locks | `DIRECT_URL` is pointing at port 6543. Migrations need 5432. |
-| `password authentication failed` | Special characters in the password are not URL-encoded. |
-| `Max client connections reached` | Runtime is not using the 6543 pooler, or `connection_limit` is unset. |
-| API works, but data is visible via `https://<ref>.supabase.co/rest/v1/...` | `supabase-setup.sql` has not been run. Run it, then `npm run db:check`. |
-| `Tenant or user not found` | The pooler username must be `postgres.[PROJECT-REF]`, not plain `postgres`. |
+18 tables, already provisioned. The API does not migrate anything at runtime, so
+schema changes are made in the Supabase SQL editor.
 
-Supabase pauses free-tier projects after ~7 days idle; the first request then
-fails until it resumes from the dashboard. Worth knowing before blaming the API.
+When adding a column the API should read or write, add it there first — PostgREST
+picks it up from its schema cache automatically.
 
 ---
 
-## Neon vs Supabase
+## The one security step still outstanding
 
-Both are managed Postgres and the backend runs identically on either.
+Supabase publishes **every table in the `public` schema** through PostgREST at
+`https://<project>.supabase.co/rest/v1/`, authorised by the **anon key** — which is
+public by design and ships inside frontend bundles.
 
-| | Neon | Supabase |
-|---|---|---|
-| Pooling | Built into the `-pooler` host | Supavisor, separate port (6543) |
-| Prisma extra config | none | `pgbouncer=true` required |
-| Auto REST API | none | PostgREST on every `public` table — must be locked down |
-| Free tier idling | scale-to-zero, auto-resumes | pauses after ~7 days, manual resume |
+This backend removed RLS when it replaced Supabase Auth, so that door is currently
+open: anyone with the anon key can read `contact_leads`, `service_surveys` and
+`users` directly, bypassing every check the API makes.
 
-Supabase's auto-generated REST API is the one meaningful operational difference,
-and step 5 is what neutralises it.
+**Do not close it yet if your live site still reads Supabase directly** — revoking
+anon access would take the site down. Once the frontend points at this API, run the
+following in the Supabase SQL editor:
+
+```sql
+-- Revoke PostgREST access from the public-facing roles
+do $$
+declare t text;
+begin
+  for t in select tablename from pg_tables where schemaname = 'public' loop
+    execute format('revoke all privileges on table public.%I from anon', t);
+    execute format('revoke all privileges on table public.%I from authenticated', t);
+    execute format('alter table public.%I enable row level security', t);
+  end loop;
+end $$;
+
+revoke usage on schema public from anon, authenticated;
+
+-- Keep anything created later locked down too
+alter default privileges in schema public revoke all on tables from anon, authenticated;
+```
+
+Your API is unaffected: the service-role key is not `anon`.
+
+Confirm it worked — this should return zero rows:
+
+```sql
+select table_name, grantee from information_schema.role_table_grants
+where table_schema = 'public' and grantee in ('anon', 'authenticated');
+```
+
+---
+
+## Operational notes
+
+**No transactions.** PostgREST exposes no multi-statement transactions. Reorder
+works around this with a single atomic upsert; relation syncing (case-study credits,
+showcase placements) is delete-then-insert, which on failure leaves the parent with
+none rather than duplicates.
+
+**Free-tier pausing.** Supabase pauses free projects after ~7 days idle; the first
+request then fails until it resumes from the dashboard. Worth ruling out before
+blaming the API.
+
+**Schema cache.** If a freshly added table returns `PGRST205`, PostgREST has not
+reloaded its cache yet — it refreshes shortly, or you can reload it from the
+dashboard.

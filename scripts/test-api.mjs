@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs'
 
 const ORIGIN = 'http://localhost:4000'
-const P = '/api/v1'
+const P = '/api'
 
 let pass = 0, fail = 0
 const failures = []
@@ -18,7 +18,7 @@ function ok(label, condition, detail = '') {
   else { fail++; failures.push(`${label} ${detail}`); console.log(`  ✗ ${label} — ${detail}`) }
 }
 
-/** @param route the express pattern, e.g. 'GET /api/v1/blog/:id' */
+/** @param route the express pattern, e.g. 'GET /api/blog/:id' */
 async function api(method, path, { token, body, form, expect, route, raw = false } = {}) {
   if (route) covered.add(route)
 
@@ -52,16 +52,16 @@ const H = (t) => console.log(`\n━━━ ${t} ━━━`)
 // ═══════════════════════════════════════════════════════════ ROOT & HEALTH
 H('Root, index & health')
 await api('GET', '/', { expect: 200, route: 'GET /' })
-const index = await api('GET', `${P}/`, { expect: 200, route: 'GET /api/v1/' })
+const index = await api('GET', `${P}/`, { expect: 200, route: 'GET /api/' })
 ok('index lists all modules', index.json?.data?.endpoints?.length >= 14, `${index.json?.data?.endpoints?.length} modules`)
-await api('GET', `${P}/health/`, { expect: 200, route: 'GET /api/v1/health/' })
-const db = await api('GET', `${P}/health/db`, { expect: 200, route: 'GET /api/v1/health/db' })
+await api('GET', `${P}/health/`, { expect: 200, route: 'GET /api/health/' })
+const db = await api('GET', `${P}/health/db`, { expect: 200, route: 'GET /api/health/db' })
 ok('health/db reports latency', typeof db.json?.data?.latency_ms === 'number', `${db.json?.data?.latency_ms}ms`)
 
 // ═══════════════════════════════════════════════════════════ AUTH
 H('Auth')
 const login = await api('POST', `${P}/auth/login`, {
-  body: { email: 'admin@ghlprime.com', password: 'Admin@12345' }, expect: 200, route: 'POST /api/v1/auth/login',
+  body: { email: 'admin@ghlprime.com', password: 'Admin@12345' }, expect: 200, route: 'POST /api/auth/login',
 })
 if (login.status === 429) {
   console.error(`
@@ -84,12 +84,12 @@ await api('POST', `${P}/auth/login`, { body: { email: 'admin@ghlprime.com', pass
 await api('POST', `${P}/auth/login`, { body: { email: 'nobody@nowhere.com', password: 'whatever' }, expect: 401 })
 await api('POST', `${P}/auth/login`, { body: { email: 'not-an-email', password: 'x' }, expect: 422 })
 
-await api('GET', `${P}/auth/me`, { token, expect: 200, route: 'GET /api/v1/auth/me' })
+await api('GET', `${P}/auth/me`, { token, expect: 200, route: 'GET /api/auth/me' })
 await api('GET', `${P}/auth/me`, { expect: 401 })
-await api('GET', `${P}/auth/session`, { token, expect: 200, route: 'GET /api/v1/auth/session' })
-await api('GET', `${P}/auth/users`, { token, expect: 200, route: 'GET /api/v1/auth/users' })
+await api('GET', `${P}/auth/session`, { token, expect: 200, route: 'GET /api/auth/session' })
+await api('GET', `${P}/auth/users`, { token, expect: 200, route: 'GET /api/auth/users' })
 
-const refreshed = await api('POST', `${P}/auth/refresh`, { body: { refreshToken }, expect: 200, route: 'POST /api/v1/auth/refresh' })
+const refreshed = await api('POST', `${P}/auth/refresh`, { body: { refreshToken }, expect: 200, route: 'POST /api/auth/refresh' })
 const token2 = refreshed.json?.data?.access_token
 const refresh2 = refreshed.json?.data?.refresh_token
 ok('refresh rotates the token', Boolean(refresh2) && refresh2 !== refreshToken)
@@ -99,11 +99,11 @@ ok('spent refresh token is revoked', true)
 // user management
 const newUser = await api('POST', `${P}/auth/register`, {
   token: token2, body: { email: `editor_${Date.now()}@test.com`, password: 'Editor@12345', fullName: 'Test Editor', role: 'EDITOR' },
-  expect: 201, route: 'POST /api/v1/auth/register',
+  expect: 201, route: 'POST /api/auth/register',
 })
 const userId = newUser.json?.data?.id
 await api('POST', `${P}/auth/register`, { token: token2, body: { email: 'admin@ghlprime.com', password: 'Whatever@123' }, expect: 409 })
-await api('PATCH', `${P}/auth/users/${userId}`, { token: token2, body: { fullName: 'Renamed Editor', isActive: true }, expect: 200, route: 'PATCH /api/v1/auth/users/:id' })
+await api('PATCH', `${P}/auth/users/${userId}`, { token: token2, body: { fullName: 'Renamed Editor', isActive: true }, expect: 200, route: 'PATCH /api/auth/users/:id' })
 
 // role enforcement: EDITOR must not reach admin-only routes
 const editorLogin = await api('POST', `${P}/auth/login`, { body: { email: newUser.json?.data?.email, password: 'Editor@12345' }, expect: 200 })
@@ -115,36 +115,36 @@ ok('EDITOR can manage content', true)
 // Clean up immediately — this suite runs against a live database.
 if (editorPost.json?.data?.id) await api('DELETE', `${P}/blog/${editorPost.json.data.id}`, { token: editorToken, expect: 200 })
 
-await api('POST', `${P}/auth/change-password`, { token: editorToken, body: { currentPassword: 'Editor@12345', newPassword: 'Editor@54321' }, expect: 200, route: 'POST /api/v1/auth/change-password' })
+await api('POST', `${P}/auth/change-password`, { token: editorToken, body: { currentPassword: 'Editor@12345', newPassword: 'Editor@54321' }, expect: 200, route: 'POST /api/auth/change-password' })
 await api('POST', `${P}/auth/change-password`, { token: editorToken, body: { currentPassword: 'wrong', newPassword: 'Editor@99999' }, expect: [401, 403] })
-await api('POST', `${P}/auth/logout`, { token: editorToken, body: {}, expect: 200, route: 'POST /api/v1/auth/logout' })
-await api('DELETE', `${P}/auth/users/${userId}`, { token: token2, expect: 200, route: 'DELETE /api/v1/auth/users/:id' })
+await api('POST', `${P}/auth/logout`, { token: editorToken, body: {}, expect: 200, route: 'POST /api/auth/logout' })
+await api('DELETE', `${P}/auth/users/${userId}`, { token: token2, expect: 200, route: 'DELETE /api/auth/users/:id' })
 
 // ═══════════════════════════════════════════════════════════ DASHBOARD
 H('Dashboard')
-const summary = await api('GET', `${P}/dashboard/summary`, { token: token2, expect: 200, route: 'GET /api/v1/dashboard/summary' })
-await api('GET', `${P}/dashboard/counts`, { token: token2, expect: 200, route: 'GET /api/v1/dashboard/counts' })
-await api('GET', `${P}/dashboard/recent`, { token: token2, expect: 200, route: 'GET /api/v1/dashboard/recent' })
+const summary = await api('GET', `${P}/dashboard/summary`, { token: token2, expect: 200, route: 'GET /api/dashboard/summary' })
+await api('GET', `${P}/dashboard/counts`, { token: token2, expect: 200, route: 'GET /api/dashboard/counts' })
+await api('GET', `${P}/dashboard/recent`, { token: token2, expect: 200, route: 'GET /api/dashboard/recent' })
 await api('GET', `${P}/dashboard/summary`, { expect: 401 })
 ok('summary has counts+recent', Boolean(summary.json?.data?.counts && summary.json?.data?.recent))
 
 // ═══════════════════════════════════════════════════════════ CASE STUDIES
 H('Case studies')
-const teamRes = await api('GET', `${P}/team/members`, { expect: 200, route: 'GET /api/v1/team/members/' })
+const teamRes = await api('GET', `${P}/team/members`, { expect: 200, route: 'GET /api/team/members/' })
 const memberId = teamRes.json?.data?.[0]?.id
 
-const csList = await api('GET', `${P}/case-studies/`, { expect: 200, route: 'GET /api/v1/case-studies/' })
+const csList = await api('GET', `${P}/case-studies/`, { expect: 200, route: 'GET /api/case-studies/' })
 await api('GET', `${P}/case-studies/?category=Automation&search=lead`, { expect: 200 })
-await api('GET', `${P}/case-studies/admin`, { token: token2, expect: 200, route: 'GET /api/v1/case-studies/admin' })
+await api('GET', `${P}/case-studies/admin`, { token: token2, expect: 200, route: 'GET /api/case-studies/admin' })
 await api('GET', `${P}/case-studies/admin`, { expect: 401 })
-await api('GET', `${P}/case-studies/categories`, { expect: 200, route: 'GET /api/v1/case-studies/categories' })
+await api('GET', `${P}/case-studies/categories`, { expect: 200, route: 'GET /api/case-studies/categories' })
 const csSlug = csList.json?.data?.[0]?.slug
-const oneCs = await api('GET', `${P}/case-studies/slug/${csSlug}`, { expect: 200, route: 'GET /api/v1/case-studies/slug/:slug' })
+const oneCs = await api('GET', `${P}/case-studies/slug/${csSlug}`, { expect: 200, route: 'GET /api/case-studies/slug/:slug' })
 ok('case study embeds assigned_team_members', Array.isArray(oneCs.json?.data?.assigned_team_members))
 await api('GET', `${P}/case-studies/slug/does-not-exist`, { expect: 404 })
 
 const cs = await api('POST', `${P}/case-studies/`, {
-  token: token2, expect: 201, route: 'POST /api/v1/case-studies/',
+  token: token2, expect: 201, route: 'POST /api/case-studies/',
   body: { title: 'API Test Case Study', category: 'Automation', excerpt: 'e', body: ['p1', 'p2'], published: false, teamMemberIds: memberId ? [memberId] : [] },
 })
 const csId = cs.json?.data?.id
@@ -152,112 +152,112 @@ ok('slug auto-generated from title', cs.json?.data?.slug === 'api-test-case-stud
 ok('team assignment synced', cs.json?.data?.assigned_team_members?.length === (memberId ? 1 : 0))
 ok('draft is hidden from public list', true)
 
-await api('GET', `${P}/case-studies/${csId}`, { expect: 200, route: 'GET /api/v1/case-studies/:id' })
-await api('PUT', `${P}/case-studies/${csId}`, { token: token2, body: { title: 'API Test CS v2', category: 'Automation', published: true }, expect: 200, route: 'PUT /api/v1/case-studies/:id' })
-await api('PATCH', `${P}/case-studies/${csId}`, { token: token2, body: { outcome: 'Great', teamMemberIds: [] }, expect: 200, route: 'PATCH /api/v1/case-studies/:id' })
+await api('GET', `${P}/case-studies/${csId}`, { expect: 200, route: 'GET /api/case-studies/:id' })
+await api('PUT', `${P}/case-studies/${csId}`, { token: token2, body: { title: 'API Test CS v2', category: 'Automation', published: true }, expect: 200, route: 'PUT /api/case-studies/:id' })
+await api('PATCH', `${P}/case-studies/${csId}`, { token: token2, body: { outcome: 'Great', teamMemberIds: [] }, expect: 200, route: 'PATCH /api/case-studies/:id' })
 await api('POST', `${P}/case-studies/`, { token: token2, body: { category: 'No title' }, expect: 422 })
 await api('GET', `${P}/case-studies/not-a-uuid`, { expect: 422 })
 await api('GET', `${P}/case-studies/00000000-0000-0000-0000-000000000000`, { expect: 404 })
-await api('DELETE', `${P}/case-studies/${csId}`, { token: token2, expect: 200, route: 'DELETE /api/v1/case-studies/:id' })
+await api('DELETE', `${P}/case-studies/${csId}`, { token: token2, expect: 200, route: 'DELETE /api/case-studies/:id' })
 
 // ═══════════════════════════════════════════════════════════ BLOG
 H('Blog')
-const blogList = await api('GET', `${P}/blog/`, { expect: 200, route: 'GET /api/v1/blog/' })
+const blogList = await api('GET', `${P}/blog/`, { expect: 200, route: 'GET /api/blog/' })
 const paged = await api('GET', `${P}/blog/?page=1&limit=5`, { expect: 200 })
 ok('pagination returns meta', paged.json?.meta?.limit === 5 && paged.json?.data?.length <= 5, JSON.stringify(paged.json?.meta))
-await api('GET', `${P}/blog/admin`, { token: token2, expect: 200, route: 'GET /api/v1/blog/admin' })
-await api('GET', `${P}/blog/categories`, { expect: 200, route: 'GET /api/v1/blog/categories' })
+await api('GET', `${P}/blog/admin`, { token: token2, expect: 200, route: 'GET /api/blog/admin' })
+await api('GET', `${P}/blog/categories`, { expect: 200, route: 'GET /api/blog/categories' })
 const bSlug = blogList.json?.data?.[0]?.slug
 const bCat = blogList.json?.data?.[0]?.category
-await api('GET', `${P}/blog/slug/${bSlug}`, { expect: 200, route: 'GET /api/v1/blog/slug/:slug' })
-const related = await api('GET', `${P}/blog/related?category=${encodeURIComponent(bCat)}&exclude=${bSlug}&limit=3`, { expect: 200, route: 'GET /api/v1/blog/related' })
+await api('GET', `${P}/blog/slug/${bSlug}`, { expect: 200, route: 'GET /api/blog/slug/:slug' })
+const related = await api('GET', `${P}/blog/related?category=${encodeURIComponent(bCat)}&exclude=${bSlug}&limit=3`, { expect: 200, route: 'GET /api/blog/related' })
 ok('related excludes the source post', !related.json?.data?.some(p => p.slug === bSlug))
 await api('GET', `${P}/blog/related`, { expect: 422 })
 
 const bp = await api('POST', `${P}/blog/`, {
-  token: token2, expect: 201, route: 'POST /api/v1/blog/',
+  token: token2, expect: 201, route: 'POST /api/blog/',
   body: { title: 'API Test Post', category: 'Automation', tags: ['a', 'b'], content: '<p>hi</p>', published: true },
 })
 const bpId = bp.json?.data?.id
 ok('published_at auto-stamped', Boolean(bp.json?.data?.published_at))
 ok('tags stored as array', Array.isArray(bp.json?.data?.tags) && bp.json?.data?.tags.length === 2)
-await api('GET', `${P}/blog/${bpId}`, { expect: 200, route: 'GET /api/v1/blog/:id' })
-await api('PUT', `${P}/blog/${bpId}`, { token: token2, body: { title: 'API Test Post v2', category: 'Automation' }, expect: 200, route: 'PUT /api/v1/blog/:id' })
-await api('PATCH', `${P}/blog/${bpId}`, { token: token2, body: { excerpt: 'updated' }, expect: 200, route: 'PATCH /api/v1/blog/:id' })
-await api('DELETE', `${P}/blog/${bpId}`, { token: token2, expect: 200, route: 'DELETE /api/v1/blog/:id' })
+await api('GET', `${P}/blog/${bpId}`, { expect: 200, route: 'GET /api/blog/:id' })
+await api('PUT', `${P}/blog/${bpId}`, { token: token2, body: { title: 'API Test Post v2', category: 'Automation' }, expect: 200, route: 'PUT /api/blog/:id' })
+await api('PATCH', `${P}/blog/${bpId}`, { token: token2, body: { excerpt: 'updated' }, expect: 200, route: 'PATCH /api/blog/:id' })
+await api('DELETE', `${P}/blog/${bpId}`, { token: token2, expect: 200, route: 'DELETE /api/blog/:id' })
 
 // ═══════════════════════════════════════════════════════════ TEAM
 H('Team — leaders, experts, and the bare alias')
-await api('GET', `${P}/team/`, { expect: 200, route: 'GET /api/v1/team/' })
-await api('GET', `${P}/team/admin`, { token: token2, expect: 200, route: 'GET /api/v1/team/admin' })
-await api('GET', `${P}/team/members/admin`, { token: token2, expect: 200, route: 'GET /api/v1/team/members/admin' })
-await api('GET', `${P}/team/experts/`, { expect: 200, route: 'GET /api/v1/team/experts/' })
-await api('GET', `${P}/team/experts/admin`, { token: token2, expect: 200, route: 'GET /api/v1/team/experts/admin' })
+await api('GET', `${P}/team/`, { expect: 200, route: 'GET /api/team/' })
+await api('GET', `${P}/team/admin`, { token: token2, expect: 200, route: 'GET /api/team/admin' })
+await api('GET', `${P}/team/members/admin`, { token: token2, expect: 200, route: 'GET /api/team/members/admin' })
+await api('GET', `${P}/team/experts/`, { expect: 200, route: 'GET /api/team/experts/' })
+await api('GET', `${P}/team/experts/admin`, { token: token2, expect: 200, route: 'GET /api/team/experts/admin' })
 
 const leader = await api('POST', `${P}/team/members/`, {
-  token: token2, expect: 201, route: 'POST /api/v1/team/members/',
+  token: token2, expect: 201, route: 'POST /api/team/members/',
   body: { name: 'API Leader', role: 'QA', sort_order: 7, linkedin_url: 'https://linkedin.com/in/x' },
 })
 const leaderId = leader.json?.data?.id
 ok('sort_order honoured on create', leader.json?.data?.sort_order === 7)
-await api('GET', `${P}/team/members/${leaderId}`, { expect: 200, route: 'GET /api/v1/team/members/:id' })
-await api('PUT', `${P}/team/members/${leaderId}`, { token: token2, body: { name: 'API Leader v2', role: 'QA' }, expect: 200, route: 'PUT /api/v1/team/members/:id' })
-const patched = await api('PATCH', `${P}/team/members/${leaderId}`, { token: token2, body: { description: 'd' }, expect: 200, route: 'PATCH /api/v1/team/members/:id' })
+await api('GET', `${P}/team/members/${leaderId}`, { expect: 200, route: 'GET /api/team/members/:id' })
+await api('PUT', `${P}/team/members/${leaderId}`, { token: token2, body: { name: 'API Leader v2', role: 'QA' }, expect: 200, route: 'PUT /api/team/members/:id' })
+const patched = await api('PATCH', `${P}/team/members/${leaderId}`, { token: token2, body: { description: 'd' }, expect: 200, route: 'PATCH /api/team/members/:id' })
 ok('partial update preserves sort_order', patched.json?.data?.sort_order === 7)
-await api('PATCH', `${P}/team/members/reorder`, { token: token2, body: { items: [{ id: leaderId, sort_order: 3 }] }, expect: 200, route: 'PATCH /api/v1/team/members/reorder' })
-await api('PATCH', `${P}/team/reorder`, { token: token2, body: { items: [{ id: leaderId, sort_order: 7 }] }, expect: 200, route: 'PATCH /api/v1/team/reorder' })
+await api('PATCH', `${P}/team/members/reorder`, { token: token2, body: { items: [{ id: leaderId, sort_order: 3 }] }, expect: 200, route: 'PATCH /api/team/members/reorder' })
+await api('PATCH', `${P}/team/reorder`, { token: token2, body: { items: [{ id: leaderId, sort_order: 7 }] }, expect: 200, route: 'PATCH /api/team/reorder' })
 await api('POST', `${P}/team/members/`, { token: token2, body: { role: 'no name' }, expect: 422 })
-await api('DELETE', `${P}/team/members/${leaderId}`, { token: token2, expect: 200, route: 'DELETE /api/v1/team/members/:id' })
+await api('DELETE', `${P}/team/members/${leaderId}`, { token: token2, expect: 200, route: 'DELETE /api/team/members/:id' })
 
 // bare /team alias (same router)
-const aliasLeader = await api('POST', `${P}/team/`, { token: token2, body: { name: 'Alias Leader', role: 'QA' }, expect: 201, route: 'POST /api/v1/team/' })
-await api('GET', `${P}/team/${aliasLeader.json?.data?.id}`, { expect: 200, route: 'GET /api/v1/team/:id' })
-await api('PUT', `${P}/team/${aliasLeader.json?.data?.id}`, { token: token2, body: { name: 'Alias v2', role: 'QA' }, expect: 200, route: 'PUT /api/v1/team/:id' })
-await api('PATCH', `${P}/team/${aliasLeader.json?.data?.id}`, { token: token2, body: { description: 'x' }, expect: 200, route: 'PATCH /api/v1/team/:id' })
-await api('DELETE', `${P}/team/${aliasLeader.json?.data?.id}`, { token: token2, expect: 200, route: 'DELETE /api/v1/team/:id' })
+const aliasLeader = await api('POST', `${P}/team/`, { token: token2, body: { name: 'Alias Leader', role: 'QA' }, expect: 201, route: 'POST /api/team/' })
+await api('GET', `${P}/team/${aliasLeader.json?.data?.id}`, { expect: 200, route: 'GET /api/team/:id' })
+await api('PUT', `${P}/team/${aliasLeader.json?.data?.id}`, { token: token2, body: { name: 'Alias v2', role: 'QA' }, expect: 200, route: 'PUT /api/team/:id' })
+await api('PATCH', `${P}/team/${aliasLeader.json?.data?.id}`, { token: token2, body: { description: 'x' }, expect: 200, route: 'PATCH /api/team/:id' })
+await api('DELETE', `${P}/team/${aliasLeader.json?.data?.id}`, { token: token2, expect: 200, route: 'DELETE /api/team/:id' })
 
-const expert = await api('POST', `${P}/team/experts/`, { token: token2, body: { name: 'API Expert', title: 'Spec', image_url: 'https://example.com/e.png', sort_order: 2 }, expect: 201, route: 'POST /api/v1/team/experts/' })
+const expert = await api('POST', `${P}/team/experts/`, { token: token2, body: { name: 'API Expert', title: 'Spec', image_url: 'https://example.com/e.png', sort_order: 2 }, expect: 201, route: 'POST /api/team/experts/' })
 const expertId = expert.json?.data?.id
-await api('GET', `${P}/team/experts/${expertId}`, { expect: 200, route: 'GET /api/v1/team/experts/:id' })
-await api('PUT', `${P}/team/experts/${expertId}`, { token: token2, body: { name: 'API Expert v2', title: 'Spec', image_url: 'https://example.com/e.png' }, expect: 200, route: 'PUT /api/v1/team/experts/:id' })
-await api('PATCH', `${P}/team/experts/${expertId}`, { token: token2, body: { title: 'Senior Spec' }, expect: 200, route: 'PATCH /api/v1/team/experts/:id' })
-await api('PATCH', `${P}/team/experts/reorder`, { token: token2, body: { items: [{ id: expertId, sort_order: 1 }] }, expect: 200, route: 'PATCH /api/v1/team/experts/reorder' })
-await api('DELETE', `${P}/team/experts/${expertId}`, { token: token2, expect: 200, route: 'DELETE /api/v1/team/experts/:id' })
+await api('GET', `${P}/team/experts/${expertId}`, { expect: 200, route: 'GET /api/team/experts/:id' })
+await api('PUT', `${P}/team/experts/${expertId}`, { token: token2, body: { name: 'API Expert v2', title: 'Spec', image_url: 'https://example.com/e.png' }, expect: 200, route: 'PUT /api/team/experts/:id' })
+await api('PATCH', `${P}/team/experts/${expertId}`, { token: token2, body: { title: 'Senior Spec' }, expect: 200, route: 'PATCH /api/team/experts/:id' })
+await api('PATCH', `${P}/team/experts/reorder`, { token: token2, body: { items: [{ id: expertId, sort_order: 1 }] }, expect: 200, route: 'PATCH /api/team/experts/reorder' })
+await api('DELETE', `${P}/team/experts/${expertId}`, { token: token2, expect: 200, route: 'DELETE /api/team/experts/:id' })
 
 // ═══════════════════════════════════════════════════════════ GALLERY
 H('Gallery')
-const gAll = await api('GET', `${P}/gallery/`, { expect: 200, route: 'GET /api/v1/gallery/' })
+const gAll = await api('GET', `${P}/gallery/`, { expect: 200, route: 'GET /api/gallery/' })
 ok('combined gallery returns categories+images', Array.isArray(gAll.json?.data?.categories) && Array.isArray(gAll.json?.data?.images))
-await api('GET', `${P}/gallery/categories/`, { expect: 200, route: 'GET /api/v1/gallery/categories/' })
-await api('GET', `${P}/gallery/categories/admin`, { token: token2, expect: 200, route: 'GET /api/v1/gallery/categories/admin' })
-await api('GET', `${P}/gallery/images/`, { expect: 200, route: 'GET /api/v1/gallery/images/' })
-await api('GET', `${P}/gallery/images/admin`, { token: token2, expect: 200, route: 'GET /api/v1/gallery/images/admin' })
+await api('GET', `${P}/gallery/categories/`, { expect: 200, route: 'GET /api/gallery/categories/' })
+await api('GET', `${P}/gallery/categories/admin`, { token: token2, expect: 200, route: 'GET /api/gallery/categories/admin' })
+await api('GET', `${P}/gallery/images/`, { expect: 200, route: 'GET /api/gallery/images/' })
+await api('GET', `${P}/gallery/images/admin`, { token: token2, expect: 200, route: 'GET /api/gallery/images/admin' })
 
-const gc = await api('POST', `${P}/gallery/categories/`, { token: token2, body: { name: 'API Gallery Cat' }, expect: 201, route: 'POST /api/v1/gallery/categories/' })
+const gc = await api('POST', `${P}/gallery/categories/`, { token: token2, body: { name: 'API Gallery Cat' }, expect: 201, route: 'POST /api/gallery/categories/' })
 const gcId = gc.json?.data?.id
 ok('category slug auto-generated', gc.json?.data?.slug === 'api-gallery-cat', gc.json?.data?.slug)
-await api('GET', `${P}/gallery/categories/${gcId}`, { expect: 200, route: 'GET /api/v1/gallery/categories/:id' })
-await api('PUT', `${P}/gallery/categories/${gcId}`, { token: token2, body: { name: 'API Cat v2' }, expect: 200, route: 'PUT /api/v1/gallery/categories/:id' })
-await api('PATCH', `${P}/gallery/categories/${gcId}`, { token: token2, body: { published: true }, expect: 200, route: 'PATCH /api/v1/gallery/categories/:id' })
-await api('PATCH', `${P}/gallery/categories/reorder`, { token: token2, body: { items: [{ id: gcId, sort_order: 5 }] }, expect: 200, route: 'PATCH /api/v1/gallery/categories/reorder' })
+await api('GET', `${P}/gallery/categories/${gcId}`, { expect: 200, route: 'GET /api/gallery/categories/:id' })
+await api('PUT', `${P}/gallery/categories/${gcId}`, { token: token2, body: { name: 'API Cat v2' }, expect: 200, route: 'PUT /api/gallery/categories/:id' })
+await api('PATCH', `${P}/gallery/categories/${gcId}`, { token: token2, body: { published: true }, expect: 200, route: 'PATCH /api/gallery/categories/:id' })
+await api('PATCH', `${P}/gallery/categories/reorder`, { token: token2, body: { items: [{ id: gcId, sort_order: 5 }] }, expect: 200, route: 'PATCH /api/gallery/categories/reorder' })
 
-const gi = await api('POST', `${P}/gallery/images/`, { token: token2, body: { title: 'API Img', image_url: 'https://example.com/i.png', category_id: gcId }, expect: 201, route: 'POST /api/v1/gallery/images/' })
+const gi = await api('POST', `${P}/gallery/images/`, { token: token2, body: { title: 'API Img', image_url: 'https://example.com/i.png', category_id: gcId }, expect: 201, route: 'POST /api/gallery/images/' })
 const giId = gi.json?.data?.id
-await api('GET', `${P}/gallery/images/${giId}`, { expect: 200, route: 'GET /api/v1/gallery/images/:id' })
-const byCat = await api('GET', `${P}/gallery/images/by-category/${gcId}`, { expect: 200, route: 'GET /api/v1/gallery/images/by-category/:categoryId' })
+await api('GET', `${P}/gallery/images/${giId}`, { expect: 200, route: 'GET /api/gallery/images/:id' })
+const byCat = await api('GET', `${P}/gallery/images/by-category/${gcId}`, { expect: 200, route: 'GET /api/gallery/images/by-category/:categoryId' })
 ok('by-category filters correctly', byCat.json?.data?.every(i => i.category_id === gcId))
-await api('PUT', `${P}/gallery/images/${giId}`, { token: token2, body: { title: 'API Img v2', image_url: 'https://example.com/i2.png' }, expect: 200, route: 'PUT /api/v1/gallery/images/:id' })
-await api('PATCH', `${P}/gallery/images/${giId}`, { token: token2, body: { published: false }, expect: 200, route: 'PATCH /api/v1/gallery/images/:id' })
-await api('PATCH', `${P}/gallery/images/reorder`, { token: token2, body: { items: [{ id: giId, sort_order: 4 }] }, expect: 200, route: 'PATCH /api/v1/gallery/images/reorder' })
-await api('DELETE', `${P}/gallery/images/${giId}`, { token: token2, expect: 200, route: 'DELETE /api/v1/gallery/images/:id' })
-await api('DELETE', `${P}/gallery/categories/${gcId}`, { token: token2, expect: 200, route: 'DELETE /api/v1/gallery/categories/:id' })
+await api('PUT', `${P}/gallery/images/${giId}`, { token: token2, body: { title: 'API Img v2', image_url: 'https://example.com/i2.png' }, expect: 200, route: 'PUT /api/gallery/images/:id' })
+await api('PATCH', `${P}/gallery/images/${giId}`, { token: token2, body: { published: false }, expect: 200, route: 'PATCH /api/gallery/images/:id' })
+await api('PATCH', `${P}/gallery/images/reorder`, { token: token2, body: { items: [{ id: giId, sort_order: 4 }] }, expect: 200, route: 'PATCH /api/gallery/images/reorder' })
+await api('DELETE', `${P}/gallery/images/${giId}`, { token: token2, expect: 200, route: 'DELETE /api/gallery/images/:id' })
+await api('DELETE', `${P}/gallery/categories/${gcId}`, { token: token2, expect: 200, route: 'DELETE /api/gallery/categories/:id' })
 
 // ═══════════════════════════════════════════════════════════ SORTABLE COLLECTIONS
 H('Meeting gallery / partner logos / technology logos')
 for (const [base, createBody, routeBase] of [
-  ['meeting-gallery', { title: 'API Meeting', image_url: 'https://example.com/m.png' }, '/api/v1/meeting-gallery'],
-  ['partner-logos', { name: 'API Partner', image_url: 'https://example.com/p.png', sort_order: 6 }, '/api/v1/partner-logos'],
-  ['technology-logos', { name: 'API Tech', image_url: 'https://example.com/t.png' }, '/api/v1/technology-logos'],
+  ['meeting-gallery', { title: 'API Meeting', image_url: 'https://example.com/m.png' }, '/api/meeting-gallery'],
+  ['partner-logos', { name: 'API Partner', image_url: 'https://example.com/p.png', sort_order: 6 }, '/api/partner-logos'],
+  ['technology-logos', { name: 'API Tech', image_url: 'https://example.com/t.png' }, '/api/technology-logos'],
 ]) {
   await api('GET', `${P}/${base}/`, { expect: 200, route: `GET ${routeBase}/` })
   await api('GET', `${P}/${base}/admin`, { token: token2, expect: 200, route: `GET ${routeBase}/admin` })
@@ -278,40 +278,40 @@ await api('DELETE', `${P}/partner-logos/${pl.json?.data?.id}`, { token: token2, 
 
 // ═══════════════════════════════════════════════════════════ SHOWCASE
 H('Showcase')
-const scPage = await api('GET', `${P}/showcase/page/home`, { expect: 200, route: 'GET /api/v1/showcase/page/:pageKey' })
+const scPage = await api('GET', `${P}/showcase/page/home`, { expect: 200, route: 'GET /api/showcase/page/:pageKey' })
 ok('page bundle returns items+stats', Array.isArray(scPage.json?.data?.items) && Array.isArray(scPage.json?.data?.stats))
-await api('GET', `${P}/showcase/items/`, { expect: 200, route: 'GET /api/v1/showcase/items/' })
-await api('GET', `${P}/showcase/items/admin`, { token: token2, expect: 200, route: 'GET /api/v1/showcase/items/admin' })
-await api('GET', `${P}/showcase/items/page/home`, { expect: 200, route: 'GET /api/v1/showcase/items/page/:pageKey' })
-await api('GET', `${P}/showcase/stats/`, { expect: 200, route: 'GET /api/v1/showcase/stats/' })
-await api('GET', `${P}/showcase/stats/admin`, { token: token2, expect: 200, route: 'GET /api/v1/showcase/stats/admin' })
+await api('GET', `${P}/showcase/items/`, { expect: 200, route: 'GET /api/showcase/items/' })
+await api('GET', `${P}/showcase/items/admin`, { token: token2, expect: 200, route: 'GET /api/showcase/items/admin' })
+await api('GET', `${P}/showcase/items/page/home`, { expect: 200, route: 'GET /api/showcase/items/page/:pageKey' })
+await api('GET', `${P}/showcase/stats/`, { expect: 200, route: 'GET /api/showcase/stats/' })
+await api('GET', `${P}/showcase/stats/admin`, { token: token2, expect: 200, route: 'GET /api/showcase/stats/admin' })
 
 const si = await api('POST', `${P}/showcase/items/`, {
-  token: token2, expect: 201, route: 'POST /api/v1/showcase/items/',
+  token: token2, expect: 201, route: 'POST /api/showcase/items/',
   body: { origin_name: 'API Origin', adaptation_name: 'API Adapt', adaptation_tags: ['X', 'Y'], placements: [{ page_key: 'home', sort_order: 9 }] },
 })
 const siId = si.json?.data?.id
 ok('placements synced on create', si.json?.data?.placements?.length === 1)
 ok('adaptation_tags stored as JSON array', Array.isArray(si.json?.data?.adaptation_tags))
-await api('GET', `${P}/showcase/items/${siId}`, { expect: 200, route: 'GET /api/v1/showcase/items/:id' })
-await api('PUT', `${P}/showcase/items/${siId}`, { token: token2, body: { origin_name: 'API Origin v2', adaptation_name: 'API Adapt' }, expect: 200, route: 'PUT /api/v1/showcase/items/:id' })
-const siCleared = await api('PATCH', `${P}/showcase/items/${siId}`, { token: token2, body: { placements: [] }, expect: 200, route: 'PATCH /api/v1/showcase/items/:id' })
+await api('GET', `${P}/showcase/items/${siId}`, { expect: 200, route: 'GET /api/showcase/items/:id' })
+await api('PUT', `${P}/showcase/items/${siId}`, { token: token2, body: { origin_name: 'API Origin v2', adaptation_name: 'API Adapt' }, expect: 200, route: 'PUT /api/showcase/items/:id' })
+const siCleared = await api('PATCH', `${P}/showcase/items/${siId}`, { token: token2, body: { placements: [] }, expect: 200, route: 'PATCH /api/showcase/items/:id' })
 ok('empty placements array clears placements', siCleared.json?.data?.placements?.length === 0)
-await api('PATCH', `${P}/showcase/items/reorder`, { token: token2, body: { items: [{ id: siId, sort_order: 3 }] }, expect: 200, route: 'PATCH /api/v1/showcase/items/reorder' })
-await api('DELETE', `${P}/showcase/items/${siId}`, { token: token2, expect: 200, route: 'DELETE /api/v1/showcase/items/:id' })
+await api('PATCH', `${P}/showcase/items/reorder`, { token: token2, body: { items: [{ id: siId, sort_order: 3 }] }, expect: 200, route: 'PATCH /api/showcase/items/reorder' })
+await api('DELETE', `${P}/showcase/items/${siId}`, { token: token2, expect: 200, route: 'DELETE /api/showcase/items/:id' })
 
-const ss = await api('POST', `${P}/showcase/stats/`, { token: token2, body: { value: '42', label: 'API STAT' }, expect: 201, route: 'POST /api/v1/showcase/stats/' })
+const ss = await api('POST', `${P}/showcase/stats/`, { token: token2, body: { value: '42', label: 'API STAT' }, expect: 201, route: 'POST /api/showcase/stats/' })
 const ssId = ss.json?.data?.id
-await api('GET', `${P}/showcase/stats/${ssId}`, { expect: 200, route: 'GET /api/v1/showcase/stats/:id' })
-await api('PUT', `${P}/showcase/stats/${ssId}`, { token: token2, body: { value: '43', label: 'API STAT' }, expect: 200, route: 'PUT /api/v1/showcase/stats/:id' })
-await api('PATCH', `${P}/showcase/stats/${ssId}`, { token: token2, body: { published: false }, expect: 200, route: 'PATCH /api/v1/showcase/stats/:id' })
-await api('PATCH', `${P}/showcase/stats/reorder`, { token: token2, body: { items: [{ id: ssId, sort_order: 2 }] }, expect: 200, route: 'PATCH /api/v1/showcase/stats/reorder' })
-await api('DELETE', `${P}/showcase/stats/${ssId}`, { token: token2, expect: 200, route: 'DELETE /api/v1/showcase/stats/:id' })
+await api('GET', `${P}/showcase/stats/${ssId}`, { expect: 200, route: 'GET /api/showcase/stats/:id' })
+await api('PUT', `${P}/showcase/stats/${ssId}`, { token: token2, body: { value: '43', label: 'API STAT' }, expect: 200, route: 'PUT /api/showcase/stats/:id' })
+await api('PATCH', `${P}/showcase/stats/${ssId}`, { token: token2, body: { published: false }, expect: 200, route: 'PATCH /api/showcase/stats/:id' })
+await api('PATCH', `${P}/showcase/stats/reorder`, { token: token2, body: { items: [{ id: ssId, sort_order: 2 }] }, expect: 200, route: 'PATCH /api/showcase/stats/reorder' })
+await api('DELETE', `${P}/showcase/stats/${ssId}`, { token: token2, expect: 200, route: 'DELETE /api/showcase/stats/:id' })
 
 // ═══════════════════════════════════════════════════════════ CONTACT
 H('Contact')
 const lead = await api('POST', `${P}/contact/submit`, {
-  expect: [201, 502], route: 'POST /api/v1/contact/submit',
+  expect: [201, 502], route: 'POST /api/contact/submit',
   body: {
     name: 'API Contact', email: 'api-contact@example.com', business_name: 'API Co', country: 'US', phone: '+1 555 0111',
     role: 'Agency owner', ghl_situation: 'Messy', client_volume: '6-20', monthly_budget: '$2k-5k',
@@ -325,21 +325,21 @@ const spam = await api('POST', `${P}/contact/submit`, { body: { name: 'Bot', ema
 ok('honeypot silently flags spam', spam.json?.data?.spam === true)
 await api('POST', `${P}/contact/submit`, { body: { email: 'bad' }, expect: 422 })
 
-const leadList = await api('GET', `${P}/contact/leads/`, { token: token2, expect: 200, route: 'GET /api/v1/contact/leads/' })
+const leadList = await api('GET', `${P}/contact/leads/`, { token: token2, expect: 200, route: 'GET /api/contact/leads/' })
 ok('lead inbox is paginated', typeof leadList.json?.meta?.total === 'number')
 await api('GET', `${P}/contact/leads/`, { expect: 401 })
-await api('GET', `${P}/contact/leads/stats`, { token: token2, expect: 200, route: 'GET /api/v1/contact/leads/stats' })
-await api('GET', `${P}/contact/leads/${leadId}`, { token: token2, expect: 200, route: 'GET /api/v1/contact/leads/:id' })
-const moved = await api('PATCH', `${P}/contact/leads/${leadId}/status`, { token: token2, body: { status: 'QUALIFIED', notes: 'Good fit' }, expect: 200, route: 'PATCH /api/v1/contact/leads/:id/status' })
+await api('GET', `${P}/contact/leads/stats`, { token: token2, expect: 200, route: 'GET /api/contact/leads/stats' })
+await api('GET', `${P}/contact/leads/${leadId}`, { token: token2, expect: 200, route: 'GET /api/contact/leads/:id' })
+const moved = await api('PATCH', `${P}/contact/leads/${leadId}/status`, { token: token2, body: { status: 'QUALIFIED', notes: 'Good fit' }, expect: 200, route: 'PATCH /api/contact/leads/:id/status' })
 ok('status transition applied', moved.json?.data?.status === 'QUALIFIED')
 await api('PATCH', `${P}/contact/leads/${leadId}/status`, { token: token2, body: { status: 'NOT_A_STATUS' }, expect: 422 })
 await api('GET', `${P}/contact/leads/?status=QUALIFIED&page=1&limit=5`, { token: token2, expect: 200 })
-await api('DELETE', `${P}/contact/leads/${leadId}`, { token: token2, expect: 200, route: 'DELETE /api/v1/contact/leads/:id' })
+await api('DELETE', `${P}/contact/leads/${leadId}`, { token: token2, expect: 200, route: 'DELETE /api/contact/leads/:id' })
 
 // ═══════════════════════════════════════════════════════════ SERVICE SURVEYS
 H('Service surveys')
 const survey = await api('POST', `${P}/service-surveys/submit`, {
-  expect: [201, 502], route: 'POST /api/v1/service-surveys/submit',
+  expect: [201, 502], route: 'POST /api/service-surveys/submit',
   body: {
     name: 'API Survey', email: 'api-survey@example.com', phone: '+1 555 0122', business: 'API Agency',
     role: 'Agency owner', needs: 'GHL setup', sub_accounts: '6–20 clients', service: '/services/ghl-setup',
@@ -351,13 +351,13 @@ const surveyId = survey.json?.data?.id
 ok('survey service page recorded', survey.json?.data?.service === '/services/ghl-setup')
 ok('survey sub_accounts mapped', survey.json?.data?.sub_accounts === '6–20 clients')
 await api('POST', `${P}/service-surveys/submit`, { body: { email: 'nope' }, expect: 422 })
-await api('GET', `${P}/service-surveys/submissions/`, { token: token2, expect: 200, route: 'GET /api/v1/service-surveys/submissions/' })
-await api('GET', `${P}/service-surveys/submissions/stats`, { token: token2, expect: 200, route: 'GET /api/v1/service-surveys/submissions/stats' })
-await api('GET', `${P}/service-surveys/submissions/${surveyId}`, { token: token2, expect: 200, route: 'GET /api/v1/service-surveys/submissions/:id' })
-const byService = await api('GET', `${P}/service-surveys/by-service`, { token: token2, expect: 200, route: 'GET /api/v1/service-surveys/by-service' })
+await api('GET', `${P}/service-surveys/submissions/`, { token: token2, expect: 200, route: 'GET /api/service-surveys/submissions/' })
+await api('GET', `${P}/service-surveys/submissions/stats`, { token: token2, expect: 200, route: 'GET /api/service-surveys/submissions/stats' })
+await api('GET', `${P}/service-surveys/submissions/${surveyId}`, { token: token2, expect: 200, route: 'GET /api/service-surveys/submissions/:id' })
+const byService = await api('GET', `${P}/service-surveys/by-service`, { token: token2, expect: 200, route: 'GET /api/service-surveys/by-service' })
 ok('by-service groups submissions', Array.isArray(byService.json?.data))
-await api('PATCH', `${P}/service-surveys/submissions/${surveyId}/status`, { token: token2, body: { status: 'CONTACTED' }, expect: 200, route: 'PATCH /api/v1/service-surveys/submissions/:id/status' })
-await api('DELETE', `${P}/service-surveys/submissions/${surveyId}`, { token: token2, expect: 200, route: 'DELETE /api/v1/service-surveys/submissions/:id' })
+await api('PATCH', `${P}/service-surveys/submissions/${surveyId}/status`, { token: token2, body: { status: 'CONTACTED' }, expect: 200, route: 'PATCH /api/service-surveys/submissions/:id/status' })
+await api('DELETE', `${P}/service-surveys/submissions/${surveyId}`, { token: token2, expect: 200, route: 'DELETE /api/service-surveys/submissions/:id' })
 
 // ═══════════════════════════════════════════════════════════ UPLOADS
 H('Uploads (Cloudinary)')
@@ -369,7 +369,7 @@ const mkForm = (field, name, data, type = 'image/png', extra = {}) => {
   return fd
 }
 
-const upStatus = await api('GET', `${P}/uploads/status`, { expect: 200, route: 'GET /api/v1/uploads/status' })
+const upStatus = await api('GET', `${P}/uploads/status`, { expect: 200, route: 'GET /api/uploads/status' })
 ok('status reports configured flag + limits', typeof upStatus.json?.data?.configured === 'boolean' && upStatus.json?.data?.max_file_size_mb > 0)
 const cloudinaryOn = upStatus.json?.data?.configured === true
 const expectUpload = cloudinaryOn ? 201 : 503
@@ -380,11 +380,11 @@ await api('POST', `${P}/uploads/image`, { form: mkForm('file', 'p.png', PNG), ex
 // Cloudinary "create" permission — the API is behaving correctly either way.
 const single = await api('POST', `${P}/uploads/image`, {
   token: token2, form: mkForm('file', 'p.png', PNG, 'image/png', { alt: 'x' }),
-  expect: cloudinaryOn ? [201, 502] : 503, route: 'POST /api/v1/uploads/image',
+  expect: cloudinaryOn ? [201, 502] : 503, route: 'POST /api/uploads/image',
 })
 const multiRes = await api('POST', `${P}/uploads/images`, {
   token: token2, form: mkForm('files', 'p.png', PNG),
-  expect: cloudinaryOn ? [201, 502] : 503, route: 'POST /api/v1/uploads/images',
+  expect: cloudinaryOn ? [201, 502] : 503, route: 'POST /api/uploads/images',
 })
 ok('single and multi upload agree on outcome', single.status === multiRes.status,
   `single=${single.status} multi=${multiRes.status}`)
@@ -399,11 +399,11 @@ if (single.status === 201) {
 }
 await api('POST', `${P}/uploads/image`, { token: token2, form: mkForm('file', 'x.sh', Buffer.from('#!/bin/sh'), 'application/x-sh'), expect: 400 })
 await api('POST', `${P}/uploads/image`, { token: token2, form: mkForm('file', 'big.png', Buffer.alloc(11 * 1024 * 1024)), expect: 400 })
-await api('GET', `${P}/uploads/signature`, { token: token2, expect: cloudinaryOn ? 200 : 503, route: 'GET /api/v1/uploads/signature' })
-await api('GET', `${P}/uploads/`, { token: token2, expect: 200, route: 'GET /api/v1/uploads/' })
+await api('GET', `${P}/uploads/signature`, { token: token2, expect: cloudinaryOn ? 200 : 503, route: 'GET /api/uploads/signature' })
+await api('GET', `${P}/uploads/`, { token: token2, expect: 200, route: 'GET /api/uploads/' })
 await api('GET', `${P}/uploads/`, { expect: 401 })
-await api('DELETE', `${P}/uploads/00000000-0000-0000-0000-000000000000`, { token: token2, expect: [404, 503], route: 'DELETE /api/v1/uploads/:id' })
-await api('DELETE', `${P}/uploads/public-id/ghlprime/nonexistent`, { token: token2, expect: [200, 404, 503], route: 'DELETE /api/v1/uploads/public-id/*' })
+await api('DELETE', `${P}/uploads/00000000-0000-0000-0000-000000000000`, { token: token2, expect: [404, 503], route: 'DELETE /api/uploads/:id' })
+await api('DELETE', `${P}/uploads/public-id/ghlprime/nonexistent`, { token: token2, expect: [200, 404, 503], route: 'DELETE /api/uploads/public-id/*' })
 ok(`uploads behave correctly (cloudinary ${cloudinaryOn ? 'configured' : 'not configured'})`, true)
 
 // ═══════════════════════════════════════════════════════════ SITEMAP & COMPAT
@@ -423,16 +423,16 @@ const refreshRes = await fetch(`${ORIGIN}${P}/sitemap/refresh`, {
   method: 'POST',
   headers: sitemapToken ? { Authorization: `Bearer ${sitemapToken}` } : {},
 })
-covered.add('POST /api/v1/sitemap/refresh')
+covered.add('POST /api/sitemap/refresh')
 const refreshed2 = { status: refreshRes.status, json: await refreshRes.json().catch(() => null) }
-ok('POST /api/v1/sitemap/refresh', refreshed2.status === 200, `${refreshed2.status}`)
+ok('POST /api/sitemap/refresh', refreshed2.status === 200, `${refreshed2.status}`)
 ok('sitemap refresh reports URL count', refreshed2.json?.data?.count > 0, `${refreshed2.json?.data?.count} URLs`)
 
 if (sitemapToken) {
   const viaHeader = await fetch(`${ORIGIN}${P}/sitemap/refresh`, { method: 'POST', headers: { 'X-Sitemap-Token': sitemapToken } })
   ok('sitemap refresh also accepts X-Sitemap-Token', viaHeader.status === 200, `${viaHeader.status}`)
 }
-const xml = await api('GET', `${P}/sitemap/xml`, { expect: 200, raw: true, route: 'GET /api/v1/sitemap/xml' })
+const xml = await api('GET', `${P}/sitemap/xml`, { expect: 200, raw: true, route: 'GET /api/sitemap/xml' })
 ok('sitemap/xml is valid XML', xml.text?.startsWith('<?xml') && xml.text.includes('<urlset'))
 ok('sitemap content-type is application/xml', xml.headers.get('content-type')?.includes('application/xml'))
 const xml2 = await api('GET', '/sitemap.xml', { expect: 200, raw: true, route: 'GET /sitemap.xml' })

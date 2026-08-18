@@ -51,7 +51,7 @@ for (const route of routes) {
   router.use(route.path, route.router)
 }
 
-/** GET /api/v1 — a self-describing index of the mounted modules. */
+/** GET /api — a self-describing index of the mounted modules. */
 router.get('/', (_req, res) => {
   res.json({
     success: true,

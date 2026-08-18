@@ -6,15 +6,17 @@ Every endpoint, with its full URL.
 |---|---|
 | **Local base URL** | `http://localhost:4000` |
 | **Production base URL** | `https://<your-project>.vercel.app` |
-| **API prefix** | `/api/v1` |
+| **API prefix** | `/api` |
 | **Total endpoints** | 144 |
 | **Content type** | `application/json` (uploads use `multipart/form-data`) |
+| **Database** | Supabase PostgreSQL, accessed over PostgREST |
+| **Image storage** | Cloudinary |
 
-Throughout this document URLs are written against `http://localhost:4000`.
-On production, swap the host — everything after it is identical.
+URLs below are written against `http://localhost:4000`. On production, swap the
+host — everything after it is identical.
 
-Regenerate the live route table any time with `npm run routes`, and verify every
-endpoint with `npm run test:api`.
+Regenerate the live route table with `npm run routes`, and verify every endpoint
+with `npm run test:api`.
 
 ---
 
@@ -24,21 +26,21 @@ endpoint with `npm run test:api`.
 |---|---|
 | [1. Conventions](#1-conventions) | — |
 | [2. Errors](#2-errors) | — |
-| [3. Auth](#3-auth) | `http://localhost:4000/api/v1/auth` |
-| [4. Dashboard](#4-dashboard) | `http://localhost:4000/api/v1/dashboard` |
-| [5. Case studies](#5-case-studies) | `http://localhost:4000/api/v1/case-studies` |
-| [6. Blog](#6-blog) | `http://localhost:4000/api/v1/blog` |
-| [7. Team](#7-team) | `http://localhost:4000/api/v1/team` |
-| [8. Gallery](#8-gallery) | `http://localhost:4000/api/v1/gallery` |
-| [9. Meeting gallery](#9-meeting-gallery) | `http://localhost:4000/api/v1/meeting-gallery` |
-| [10. Partner logos](#10-partner-logos) | `http://localhost:4000/api/v1/partner-logos` |
-| [11. Technology logos](#11-technology-logos) | `http://localhost:4000/api/v1/technology-logos` |
-| [12. Showcase](#12-showcase) | `http://localhost:4000/api/v1/showcase` |
-| [13. Contact](#13-contact) | `http://localhost:4000/api/v1/contact` |
-| [14. Service surveys](#14-service-surveys) | `http://localhost:4000/api/v1/service-surveys` |
-| [15. Image uploads](#15-image-uploads) | `http://localhost:4000/api/v1/uploads` |
-| [16. Sitemap](#16-sitemap) | `http://localhost:4000/api/v1/sitemap` |
-| [17. Health](#17-health) | `http://localhost:4000/api/v1/health` |
+| [3. Auth](#3-auth) | `http://localhost:4000/api/auth` |
+| [4. Dashboard](#4-dashboard) | `http://localhost:4000/api/dashboard` |
+| [5. Case studies](#5-case-studies) | `http://localhost:4000/api/case-studies` |
+| [6. Blog](#6-blog) | `http://localhost:4000/api/blog` |
+| [7. Team](#7-team) | `http://localhost:4000/api/team` |
+| [8. Gallery](#8-gallery) | `http://localhost:4000/api/gallery` |
+| [9. Meeting gallery](#9-meeting-gallery) | `http://localhost:4000/api/meeting-gallery` |
+| [10. Partner logos](#10-partner-logos) | `http://localhost:4000/api/partner-logos` |
+| [11. Technology logos](#11-technology-logos) | `http://localhost:4000/api/technology-logos` |
+| [12. Showcase](#12-showcase) | `http://localhost:4000/api/showcase` |
+| [13. Contact](#13-contact) | `http://localhost:4000/api/contact` |
+| [14. Service surveys](#14-service-surveys) | `http://localhost:4000/api/service-surveys` |
+| [15. Image uploads](#15-image-uploads) | `http://localhost:4000/api/uploads` |
+| [16. Sitemap](#16-sitemap) | `http://localhost:4000/api/sitemap` |
+| [17. Health](#17-health) | `http://localhost:4000/api/health` |
 | [18. Root & compatibility](#18-root--compatibility) | `http://localhost:4000/` |
 | [19. Data model](#19-data-model) | — |
 
@@ -64,7 +66,7 @@ endpoint with `npm run test:api`.
 ### Field naming
 
 Responses use **snake_case** (`image_url`, `sort_order`, `published_at`).
-Requests accept **either** casing — `imageUrl` and `image_url` both work everywhere.
+Requests accept **either** casing — `imageUrl` and `image_url` both work.
 
 ### Authentication header
 
@@ -77,7 +79,7 @@ Authorization: Bearer <access_token>
 `?page=` and `?limit=` (limit capped at 100) add:
 
 ```jsonc
-"meta": { "page": 1, "limit": 20, "total": 29, "totalPages": 2,
+"meta": { "page": 1, "limit": 20, "total": 50, "totalPages": 3,
           "hasNextPage": true, "hasPreviousPage": false }
 ```
 
@@ -96,9 +98,15 @@ the existing value alone.
 
 | Applies to | Limit | Window |
 |---|---|---|
-| Everything under `/api/v1` | 300 req | 15 min |
+| Everything under `/api` | 300 req | 15 min |
 | `/auth/login`, `/auth/refresh` | 10 req | 15 min |
 | `/contact/submit`, `/service-surveys/submit` | 20 req | 1 hour |
+
+### Changing the prefix
+
+`/api` comes from the `API_PREFIX` environment variable and is applied in one
+place (`src/app.ts`). Setting `API_PREFIX=/api/v2` moves every route at once —
+no code changes.
 
 ---
 
@@ -123,30 +131,28 @@ the existing value alone.
 ## 3. Auth
 
 ```
-http://localhost:4000/api/v1/auth
+http://localhost:4000/api/auth
 ```
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `POST` | `http://localhost:4000/api/v1/auth/login` | 🌐 |
-| 2 | `POST` | `http://localhost:4000/api/v1/auth/refresh` | 🌐 |
-| 3 | `POST` | `http://localhost:4000/api/v1/auth/logout` | 🌐 |
-| 4 | `GET` | `http://localhost:4000/api/v1/auth/me` | 🔒 |
-| 5 | `GET` | `http://localhost:4000/api/v1/auth/session` | 🔒 |
-| 6 | `POST` | `http://localhost:4000/api/v1/auth/change-password` | 🔒 |
-| 7 | `POST` | `http://localhost:4000/api/v1/auth/register` | 👑 |
-| 8 | `GET` | `http://localhost:4000/api/v1/auth/users` | 👑 |
-| 9 | `PATCH` | `http://localhost:4000/api/v1/auth/users/:id` | 👑 |
-| 10 | `DELETE` | `http://localhost:4000/api/v1/auth/users/:id` | 👑 |
+| 1 | `POST` | `http://localhost:4000/api/auth/login` | 🌐 |
+| 2 | `POST` | `http://localhost:4000/api/auth/refresh` | 🌐 |
+| 3 | `POST` | `http://localhost:4000/api/auth/logout` | 🌐 |
+| 4 | `GET` | `http://localhost:4000/api/auth/me` | 🔒 |
+| 5 | `GET` | `http://localhost:4000/api/auth/session` | 🔒 |
+| 6 | `POST` | `http://localhost:4000/api/auth/change-password` | 🔒 |
+| 7 | `POST` | `http://localhost:4000/api/auth/register` | 👑 |
+| 8 | `GET` | `http://localhost:4000/api/auth/users` | 👑 |
+| 9 | `PATCH` | `http://localhost:4000/api/auth/users/:id` | 👑 |
+| 10 | `DELETE` | `http://localhost:4000/api/auth/users/:id` | 👑 |
 
-### `POST` http://localhost:4000/api/v1/auth/login 🌐
-
-Exchange credentials for tokens.
+### `POST` http://localhost:4000/api/auth/login 🌐
 
 **Body** — `email` (required), `password` (required)
 
 ```bash
-curl -X POST http://localhost:4000/api/v1/auth/login \
+curl -X POST http://localhost:4000/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"admin@ghlprime.com","password":"Admin@12345"}'
 ```
@@ -157,59 +163,53 @@ curl -X POST http://localhost:4000/api/v1/auth/login \
   "message": "Signed in successfully",
   "data": {
     "access_token": "eyJhbGciOi…",     // 15 min
-    "refresh_token": "eyJhbGciOi…",    // 30 days, also set as httpOnly cookie
+    "refresh_token": "eyJhbGciOi…",    // 30 days, also an httpOnly cookie
     "token_type": "Bearer",
     "expires_in": 900,
-    "user": { "id": "3f9a…", "email": "admin@ghlprime.com",
-              "full_name": "GHL Prime Admin", "role": "ADMIN",
-              "is_active": true, "last_login_at": "2026-08-17T09:12:00.000Z" }
+    "user": { "id": "…", "email": "admin@ghlprime.com", "full_name": "GHL Prime Admin",
+              "role": "ADMIN", "is_active": true, "last_login_at": "…" }
   }
 }
 ```
 
-`401` on bad credentials — the message is identical whether or not the email
-exists, so this cannot be used to enumerate accounts. `403` if deactivated.
+`401` on bad credentials — identical message whether or not the email exists, so
+this cannot be used to enumerate accounts. `403` if deactivated.
 
-### `POST` http://localhost:4000/api/v1/auth/refresh 🌐
+### `POST` http://localhost:4000/api/auth/refresh 🌐
 
-Rotate the token pair. **Body** — `refreshToken` (or rely on the cookie).
-The presented token is revoked as it is spent; reusing it returns `401`.
+**Body** — `refreshToken` (or rely on the cookie). The presented token is revoked
+as it is spent; reusing it returns `401`.
 
-### `POST` http://localhost:4000/api/v1/auth/logout 🌐
+### `POST` http://localhost:4000/api/auth/logout 🌐
 
-Revokes the presented refresh token. With a bearer token and empty body,
-revokes **every** session for that user.
+Revokes the presented refresh token. With a bearer token and empty body, revokes
+**every** session for that user.
 
-### `GET` http://localhost:4000/api/v1/auth/me 🔒
-### `GET` http://localhost:4000/api/v1/auth/session 🔒
+### `GET` http://localhost:4000/api/auth/me 🔒
+### `GET` http://localhost:4000/api/auth/session 🔒
 
 The current user. `/session` is an alias — the admin panel uses it to restore a
 session on load.
 
-```jsonc
-{ "success": true, "data": { "user": { "id": "…", "email": "…", "role": "ADMIN" } } }
-```
+### `POST` http://localhost:4000/api/auth/change-password 🔒
 
-### `POST` http://localhost:4000/api/v1/auth/change-password 🔒
+**Body** — `currentPassword`, `newPassword` (min 8). Revokes all sessions on
+success.
 
-**Body** — `currentPassword`, `newPassword` (min 8).
-Revokes all existing sessions on success. `401` if the current password is wrong.
+### `POST` http://localhost:4000/api/auth/register 👑
 
-### `POST` http://localhost:4000/api/v1/auth/register 👑
+**Body** — `email`, `password` (min 8), `fullName?`, `role?`
+(`ADMIN` · `EDITOR` · `VIEWER`, default `EDITOR`). `409` if the email exists.
 
-**Body** — `email`, `password` (min 8), `fullName` (optional),
-`role` (optional: `ADMIN` · `EDITOR` · `VIEWER`, default `EDITOR`).
-`409` if the email already exists.
+### `GET` http://localhost:4000/api/auth/users 👑
 
-### `GET` http://localhost:4000/api/v1/auth/users 👑
+All users. Password hashes are never returned.
 
-All users. Password hashes are never included.
-
-### `PATCH` http://localhost:4000/api/v1/auth/users/:id 👑
+### `PATCH` http://localhost:4000/api/auth/users/:id 👑
 
 **Body** — any of `role`, `isActive`, `fullName`.
 
-### `DELETE` http://localhost:4000/api/v1/auth/users/:id 👑
+### `DELETE` http://localhost:4000/api/auth/users/:id 👑
 
 Deletes the user; their refresh tokens cascade away.
 
@@ -226,102 +226,66 @@ Deletes the user; their refresh tokens cascade away.
 ## 4. Dashboard
 
 ```
-http://localhost:4000/api/v1/dashboard
+http://localhost:4000/api/dashboard
 ```
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `GET` | `http://localhost:4000/api/v1/dashboard/summary` | 🔒 |
-| 2 | `GET` | `http://localhost:4000/api/v1/dashboard/counts` | 🔒 |
-| 3 | `GET` | `http://localhost:4000/api/v1/dashboard/recent` | 🔒 |
+| 1 | `GET` | `http://localhost:4000/api/dashboard/summary` | 🔒 |
+| 2 | `GET` | `http://localhost:4000/api/dashboard/counts` | 🔒 |
+| 3 | `GET` | `http://localhost:4000/api/dashboard/recent` | 🔒 |
 
-### `GET` http://localhost:4000/api/v1/dashboard/summary 🔒
-
-`counts` and `recent` together — one request for the whole admin landing page.
-
-### `GET` http://localhost:4000/api/v1/dashboard/counts 🔒
+### `GET` http://localhost:4000/api/dashboard/counts 🔒
 
 ```jsonc
 {
-  "case_studies":  { "total": 6,  "published": 6,  "drafts": 0 },
-  "blog_posts":    { "total": 29, "published": 29, "drafts": 0 },
-  "team_members": 2, "team_experts": 0,
-  "gallery_categories": 3, "gallery_images": 3,
-  "meeting_gallery": 3, "partner_logos": 1, "technology_logos": 10,
-  "showcase_items": 3, "showcase_stats": 4,
-  "contact_leads":   { "total": 4, "new": 3 },
-  "service_surveys": { "total": 1, "new": 1 }
+  "case_studies":  { "total": 17, "published": 17, "drafts": 0 },
+  "blog_posts":    { "total": 50, "published": 41, "drafts": 9 },
+  "team_members": 2, "team_experts": 12,
+  "gallery_categories": 1, "gallery_images": 3,
+  "meeting_gallery": 10, "partner_logos": 19, "technology_logos": 21,
+  "showcase_items": 16, "showcase_stats": 4,
+  "contact_leads":   { "total": 0, "new": 0 },
+  "service_surveys": { "total": 0, "new": 0 }
 }
 ```
 
-### `GET` http://localhost:4000/api/v1/dashboard/recent 🔒
-
-The five most recently touched records in each of `case_studies`, `blog_posts`,
-`contact_leads`, `service_surveys`.
+`/summary` returns `counts` **and** `recent` in one request — built so the admin
+landing page does not have to fetch every collection just to count it.
+`/recent` returns the five most recently touched case studies, blog posts,
+contact leads and service surveys.
 
 ---
 
 ## 5. Case studies
 
 ```
-http://localhost:4000/api/v1/case-studies
+http://localhost:4000/api/case-studies
 ```
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `GET` | `http://localhost:4000/api/v1/case-studies` | 🌐 |
-| 2 | `GET` | `http://localhost:4000/api/v1/case-studies/admin` | 🔒 |
-| 3 | `GET` | `http://localhost:4000/api/v1/case-studies/categories` | 🌐 |
-| 4 | `GET` | `http://localhost:4000/api/v1/case-studies/slug/:slug` | 🌐 |
-| 5 | `GET` | `http://localhost:4000/api/v1/case-studies/:id` | 🌐 |
-| 6 | `POST` | `http://localhost:4000/api/v1/case-studies` | 🔒 |
-| 7 | `PUT` | `http://localhost:4000/api/v1/case-studies/:id` | 🔒 |
-| 8 | `PATCH` | `http://localhost:4000/api/v1/case-studies/:id` | 🔒 |
-| 9 | `DELETE` | `http://localhost:4000/api/v1/case-studies/:id` | 🔒 |
+| 1 | `GET` | `http://localhost:4000/api/case-studies` | 🌐 |
+| 2 | `GET` | `http://localhost:4000/api/case-studies/admin` | 🔒 |
+| 3 | `GET` | `http://localhost:4000/api/case-studies/categories` | 🌐 |
+| 4 | `GET` | `http://localhost:4000/api/case-studies/slug/:slug` | 🌐 |
+| 5 | `GET` | `http://localhost:4000/api/case-studies/:id` | 🌐 |
+| 6 | `POST` | `http://localhost:4000/api/case-studies` | 🔒 |
+| 7 | `PUT` | `http://localhost:4000/api/case-studies/:id` | 🔒 |
+| 8 | `PATCH` | `http://localhost:4000/api/case-studies/:id` | 🔒 |
+| 9 | `DELETE` | `http://localhost:4000/api/case-studies/:id` | 🔒 |
 
-### `GET` http://localhost:4000/api/v1/case-studies 🌐
-
-Published studies, newest first.
-
-**Query** — `category`, `search` (matches title, category, excerpt, subtitle)
+**Query (`GET /`)** — `category`, `search` (title, category, excerpt, subtitle)
 
 ```bash
-curl "http://localhost:4000/api/v1/case-studies?category=Automation&search=lead"
+curl "http://localhost:4000/api/case-studies?category=Automation&search=lead"
+curl http://localhost:4000/api/case-studies/slug/dental-recall-no-show-automation-ghl
 ```
 
-### `GET` http://localhost:4000/api/v1/case-studies/admin 🔒
+With a valid token, `/slug/:slug` resolves drafts too; without one, only
+published.
 
-Every study including drafts. Backs `/admin/case-studies`.
-
-### `GET` http://localhost:4000/api/v1/case-studies/categories 🌐
-
-`[{ "category": "Automation", "count": 4 }, …]`
-
-### `GET` http://localhost:4000/api/v1/case-studies/slug/:slug 🌐
-
-```bash
-curl http://localhost:4000/api/v1/case-studies/slug/property-developer-ghl-nurture-automation
-```
-
-With a valid token, drafts resolve too; without one, only published.
-
-```jsonc
-{
-  "id": "…", "slug": "property-developer-ghl-nurture-automation",
-  "title": "…", "category": "Automation", "subtitle": "…",
-  "challenge": "…", "solution": "…", "outcome": "…", "excerpt": "…",
-  "image": "…", "accent": "emerald", "body": ["paragraph one", "paragraph two"],
-  "featured": false, "published": true,
-  "created_at": "…", "updated_at": "…",
-  "assigned_team_members": [
-    { "id": "…", "case_study_id": "…", "team_member_id": "…",
-      "team_member": { "id": "…", "name": "Jewel Rana",
-                       "role": "CEO & Co-Founder", "image_url": "/jewel-rana.png" } }
-  ]
-}
-```
-
-### `POST` http://localhost:4000/api/v1/case-studies 🔒
+**Body fields**
 
 | Field | Type | Notes |
 |---|---|---|
@@ -333,78 +297,55 @@ With a valid token, drafts resolve too; without one, only published.
 | `featured`, `published` | boolean | Accepts `true/false/"1"/"yes"` |
 | `teamMemberIds` | string[] | UUIDs — **replaces** the credited team wholesale |
 
-```bash
-curl -X POST http://localhost:4000/api/v1/case-studies \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"title":"New Study","category":"Automation","body":["Intro"],"published":true}'
+**Response embed** — each study carries its credited team in the shape the
+frontend already reads:
+
+```jsonc
+{
+  "id": "…", "slug": "…", "title": "…", "category": "Automation",
+  "body": ["paragraph one", "paragraph two"],
+  "featured": false, "published": true, "created_at": "…", "updated_at": "…",
+  "assigned_team_members": [
+    { "id": "…", "case_study_id": "…", "team_member_id": "…",
+      "team_member": { "id": "…", "name": "Jewel Rana", "role": "CEO & Co-Founder" } }
+  ]
+}
 ```
 
-### `PUT` / `PATCH` http://localhost:4000/api/v1/case-studies/:id 🔒
-
-Same fields; all optional. `PATCH` only touches what you send. Sending a `slug`
-already used by another study returns `409`.
-
-### `DELETE` http://localhost:4000/api/v1/case-studies/:id 🔒
-
-`{ "id": "…", "deleted": true }`. Team assignments cascade away.
-
-> Create, update and delete each trigger a sitemap refresh.
+Create, update and delete each trigger a sitemap refresh.
 
 ---
 
 ## 6. Blog
 
 ```
-http://localhost:4000/api/v1/blog
+http://localhost:4000/api/blog
 ```
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `GET` | `http://localhost:4000/api/v1/blog` | 🌐 |
-| 2 | `GET` | `http://localhost:4000/api/v1/blog/admin` | 🔒 |
-| 3 | `GET` | `http://localhost:4000/api/v1/blog/categories` | 🌐 |
-| 4 | `GET` | `http://localhost:4000/api/v1/blog/related` | 🌐 |
-| 5 | `GET` | `http://localhost:4000/api/v1/blog/slug/:slug` | 🌐 |
-| 6 | `GET` | `http://localhost:4000/api/v1/blog/:id` | 🌐 |
-| 7 | `POST` | `http://localhost:4000/api/v1/blog` | 🔒 |
-| 8 | `PUT` | `http://localhost:4000/api/v1/blog/:id` | 🔒 |
-| 9 | `PATCH` | `http://localhost:4000/api/v1/blog/:id` | 🔒 |
-| 10 | `DELETE` | `http://localhost:4000/api/v1/blog/:id` | 🔒 |
+| 1 | `GET` | `http://localhost:4000/api/blog` | 🌐 |
+| 2 | `GET` | `http://localhost:4000/api/blog/admin` | 🔒 |
+| 3 | `GET` | `http://localhost:4000/api/blog/categories` | 🌐 |
+| 4 | `GET` | `http://localhost:4000/api/blog/related` | 🌐 |
+| 5 | `GET` | `http://localhost:4000/api/blog/slug/:slug` | 🌐 |
+| 6 | `GET` | `http://localhost:4000/api/blog/:id` | 🌐 |
+| 7 | `POST` | `http://localhost:4000/api/blog` | 🔒 |
+| 8 | `PUT` | `http://localhost:4000/api/blog/:id` | 🔒 |
+| 9 | `PATCH` | `http://localhost:4000/api/blog/:id` | 🔒 |
+| 10 | `DELETE` | `http://localhost:4000/api/blog/:id` | 🔒 |
 
-### `GET` http://localhost:4000/api/v1/blog 🌐
-
-Published posts, newest first.
-
-**Query** — `category`, `search`, `featured`, `page`, `limit`.
+**Query (`GET /`)** — `category`, `search`, `featured`, `page`, `limit`.
 Supplying `page` or `limit` switches the response to the paginated envelope.
 
 ```bash
-curl "http://localhost:4000/api/v1/blog?page=1&limit=10&category=Automation"
+curl "http://localhost:4000/api/blog?page=1&limit=10&category=Automation"
+curl "http://localhost:4000/api/blog/related?category=Automation&exclude=my-post&limit=3"
 ```
 
-### `GET` http://localhost:4000/api/v1/blog/admin 🔒
+`/related` requires `category`; omitting it returns `422`.
 
-Every post including drafts, newest-created first. Backs `/admin/blog`.
-
-### `GET` http://localhost:4000/api/v1/blog/categories 🌐
-
-`[{ "category": "Automation", "count": 12 }, …]`
-
-### `GET` http://localhost:4000/api/v1/blog/related 🌐
-
-**Query** — `category` (**required**), `exclude` (slug), `limit` (default 3, max 20)
-
-```bash
-curl "http://localhost:4000/api/v1/blog/related?category=Automation&exclude=my-post&limit=3"
-```
-
-Omitting `category` returns `422`.
-
-### `GET` http://localhost:4000/api/v1/blog/slug/:slug 🌐
-
-One post by slug. Drafts require a token.
-
-### `POST` http://localhost:4000/api/v1/blog 🔒
+**Body fields**
 
 | Field | Type | Notes |
 |---|---|---|
@@ -418,18 +359,12 @@ One post by slug. Drafts require a token.
 | `featured`, `published` | boolean | |
 | `published_at` | ISO date | Auto-stamped on first publish |
 
-Setting `published: true` without a `published_at` stamps the current time.
-
-### `PUT` / `PATCH` / `DELETE` http://localhost:4000/api/v1/blog/:id 🔒
-
-Standard update and delete.
-
 ---
 
 ## 7. Team
 
 ```
-http://localhost:4000/api/v1/team
+http://localhost:4000/api/team
 ```
 
 Two separate collections:
@@ -437,112 +372,99 @@ Two separate collections:
 - **`/team/members`** — leadership profiles (`/admin/leaders`)
 - **`/team/experts`** — "Meet The Experts" profiles (`/admin/experts`)
 
-`/team` with no sub-path is an **alias for `/team/members`**, matching the old
-`fetchTeamMembers()` default.
+`/team` with no sub-path is an **alias for `/team/members`**.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `GET` | `http://localhost:4000/api/v1/team` | 🌐 |
-| 2 | `GET` | `http://localhost:4000/api/v1/team/admin` | 🔒 |
-| 3 | `PATCH` | `http://localhost:4000/api/v1/team/reorder` | 🔒 |
-| 4 | `GET` | `http://localhost:4000/api/v1/team/:id` | 🌐 |
-| 5 | `POST` | `http://localhost:4000/api/v1/team` | 🔒 |
-| 6 | `PUT` | `http://localhost:4000/api/v1/team/:id` | 🔒 |
-| 7 | `PATCH` | `http://localhost:4000/api/v1/team/:id` | 🔒 |
-| 8 | `DELETE` | `http://localhost:4000/api/v1/team/:id` | 🔒 |
-| 9 | `GET` | `http://localhost:4000/api/v1/team/members` | 🌐 |
-| 10 | `GET` | `http://localhost:4000/api/v1/team/members/admin` | 🔒 |
-| 11 | `PATCH` | `http://localhost:4000/api/v1/team/members/reorder` | 🔒 |
-| 12 | `GET` | `http://localhost:4000/api/v1/team/members/:id` | 🌐 |
-| 13 | `POST` | `http://localhost:4000/api/v1/team/members` | 🔒 |
-| 14 | `PUT` | `http://localhost:4000/api/v1/team/members/:id` | 🔒 |
-| 15 | `PATCH` | `http://localhost:4000/api/v1/team/members/:id` | 🔒 |
-| 16 | `DELETE` | `http://localhost:4000/api/v1/team/members/:id` | 🔒 |
-| 17 | `GET` | `http://localhost:4000/api/v1/team/experts` | 🌐 |
-| 18 | `GET` | `http://localhost:4000/api/v1/team/experts/admin` | 🔒 |
-| 19 | `PATCH` | `http://localhost:4000/api/v1/team/experts/reorder` | 🔒 |
-| 20 | `GET` | `http://localhost:4000/api/v1/team/experts/:id` | 🌐 |
-| 21 | `POST` | `http://localhost:4000/api/v1/team/experts` | 🔒 |
-| 22 | `PUT` | `http://localhost:4000/api/v1/team/experts/:id` | 🔒 |
-| 23 | `PATCH` | `http://localhost:4000/api/v1/team/experts/:id` | 🔒 |
-| 24 | `DELETE` | `http://localhost:4000/api/v1/team/experts/:id` | 🔒 |
+| 1 | `GET` | `http://localhost:4000/api/team` | 🌐 |
+| 2 | `GET` | `http://localhost:4000/api/team/admin` | 🔒 |
+| 3 | `PATCH` | `http://localhost:4000/api/team/reorder` | 🔒 |
+| 4 | `GET` | `http://localhost:4000/api/team/:id` | 🌐 |
+| 5 | `POST` | `http://localhost:4000/api/team` | 🔒 |
+| 6 | `PUT` | `http://localhost:4000/api/team/:id` | 🔒 |
+| 7 | `PATCH` | `http://localhost:4000/api/team/:id` | 🔒 |
+| 8 | `DELETE` | `http://localhost:4000/api/team/:id` | 🔒 |
+| 9 | `GET` | `http://localhost:4000/api/team/members` | 🌐 |
+| 10 | `GET` | `http://localhost:4000/api/team/members/admin` | 🔒 |
+| 11 | `PATCH` | `http://localhost:4000/api/team/members/reorder` | 🔒 |
+| 12 | `GET` | `http://localhost:4000/api/team/members/:id` | 🌐 |
+| 13 | `POST` | `http://localhost:4000/api/team/members` | 🔒 |
+| 14 | `PUT` | `http://localhost:4000/api/team/members/:id` | 🔒 |
+| 15 | `PATCH` | `http://localhost:4000/api/team/members/:id` | 🔒 |
+| 16 | `DELETE` | `http://localhost:4000/api/team/members/:id` | 🔒 |
+| 17 | `GET` | `http://localhost:4000/api/team/experts` | 🌐 |
+| 18 | `GET` | `http://localhost:4000/api/team/experts/admin` | 🔒 |
+| 19 | `PATCH` | `http://localhost:4000/api/team/experts/reorder` | 🔒 |
+| 20 | `GET` | `http://localhost:4000/api/team/experts/:id` | 🌐 |
+| 21 | `POST` | `http://localhost:4000/api/team/experts` | 🔒 |
+| 22 | `PUT` | `http://localhost:4000/api/team/experts/:id` | 🔒 |
+| 23 | `PATCH` | `http://localhost:4000/api/team/experts/:id` | 🔒 |
+| 24 | `DELETE` | `http://localhost:4000/api/team/experts/:id` | 🔒 |
 
 ### Leader fields (`/team/members`)
 
-| Field | Type | Notes |
-|---|---|---|
-| `name` | string | **Required** |
-| `role` | string | **Required** |
-| `description`, `image_url` | string | Optional |
-| `sort_order` | integer | Display position; defaults 999 |
-| `linkedin_url`, `facebook_url`, `instagram_url`, `twitter_url`, `upwork_url`, `website_url` | URL | Optional |
+`name` (**required**), `role` (**required**), `description`, `image_url`,
+`sort_order`, plus `linkedin_url`, `facebook_url`, `instagram_url`,
+`twitter_url`, `upwork_url`, `website_url`.
 
-> `team_members` has **no `published` column** — every leader is public, as the
-> original schema behaved. `GET /team/members` therefore returns all rows.
+> `team_members` has **no `published` column** — every leader is public, matching
+> the original schema. `GET /team/members` therefore returns all rows.
 
 ### Expert fields (`/team/experts`)
 
-`name` (**required**), `title`, `image_url`, `sort_order`, `published`.
+`name`, `title`, `image_url` — **all three required**, because those columns are
+`NOT NULL` in the live table — plus `sort_order` and `published`.
 
 ### `PATCH` .../reorder 🔒
 
 ```bash
-curl -X PATCH http://localhost:4000/api/v1/team/members/reorder \
+curl -X PATCH http://localhost:4000/api/team/members/reorder \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"items":[{"id":"uuid-a","sort_order":1},{"id":"uuid-b","sort_order":2}]}'
 ```
 
-Applied in a single transaction, so the list is never seen half-reordered.
+Applied as a single upsert, which Postgres executes atomically — the list is
+never observed half-reordered.
 
 ---
 
 ## 8. Gallery
 
 ```
-http://localhost:4000/api/v1/gallery
+http://localhost:4000/api/gallery
 ```
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `GET` | `http://localhost:4000/api/v1/gallery` | 🌐 |
-| 2 | `GET` | `http://localhost:4000/api/v1/gallery/categories` | 🌐 |
-| 3 | `GET` | `http://localhost:4000/api/v1/gallery/categories/admin` | 🔒 |
-| 4 | `PATCH` | `http://localhost:4000/api/v1/gallery/categories/reorder` | 🔒 |
-| 5 | `GET` | `http://localhost:4000/api/v1/gallery/categories/:id` | 🌐 |
-| 6 | `POST` | `http://localhost:4000/api/v1/gallery/categories` | 🔒 |
-| 7 | `PUT` | `http://localhost:4000/api/v1/gallery/categories/:id` | 🔒 |
-| 8 | `PATCH` | `http://localhost:4000/api/v1/gallery/categories/:id` | 🔒 |
-| 9 | `DELETE` | `http://localhost:4000/api/v1/gallery/categories/:id` | 🔒 |
-| 10 | `GET` | `http://localhost:4000/api/v1/gallery/images` | 🌐 |
-| 11 | `GET` | `http://localhost:4000/api/v1/gallery/images/admin` | 🔒 |
-| 12 | `GET` | `http://localhost:4000/api/v1/gallery/images/by-category/:categoryId` | 🌐 |
-| 13 | `PATCH` | `http://localhost:4000/api/v1/gallery/images/reorder` | 🔒 |
-| 14 | `GET` | `http://localhost:4000/api/v1/gallery/images/:id` | 🌐 |
-| 15 | `POST` | `http://localhost:4000/api/v1/gallery/images` | 🔒 |
-| 16 | `PUT` | `http://localhost:4000/api/v1/gallery/images/:id` | 🔒 |
-| 17 | `PATCH` | `http://localhost:4000/api/v1/gallery/images/:id` | 🔒 |
-| 18 | `DELETE` | `http://localhost:4000/api/v1/gallery/images/:id` | 🔒 |
+| 1 | `GET` | `http://localhost:4000/api/gallery` | 🌐 |
+| 2 | `GET` | `http://localhost:4000/api/gallery/categories` | 🌐 |
+| 3 | `GET` | `http://localhost:4000/api/gallery/categories/admin` | 🔒 |
+| 4 | `PATCH` | `http://localhost:4000/api/gallery/categories/reorder` | 🔒 |
+| 5 | `GET` | `http://localhost:4000/api/gallery/categories/:id` | 🌐 |
+| 6 | `POST` | `http://localhost:4000/api/gallery/categories` | 🔒 |
+| 7 | `PUT` | `http://localhost:4000/api/gallery/categories/:id` | 🔒 |
+| 8 | `PATCH` | `http://localhost:4000/api/gallery/categories/:id` | 🔒 |
+| 9 | `DELETE` | `http://localhost:4000/api/gallery/categories/:id` | 🔒 |
+| 10 | `GET` | `http://localhost:4000/api/gallery/images` | 🌐 |
+| 11 | `GET` | `http://localhost:4000/api/gallery/images/admin` | 🔒 |
+| 12 | `GET` | `http://localhost:4000/api/gallery/images/by-category/:categoryId` | 🌐 |
+| 13 | `PATCH` | `http://localhost:4000/api/gallery/images/reorder` | 🔒 |
+| 14 | `GET` | `http://localhost:4000/api/gallery/images/:id` | 🌐 |
+| 15 | `POST` | `http://localhost:4000/api/gallery/images` | 🔒 |
+| 16 | `PUT` | `http://localhost:4000/api/gallery/images/:id` | 🔒 |
+| 17 | `PATCH` | `http://localhost:4000/api/gallery/images/:id` | 🔒 |
+| 18 | `DELETE` | `http://localhost:4000/api/gallery/images/:id` | 🔒 |
 
-### `GET` http://localhost:4000/api/v1/gallery 🌐
-
-Everything the `/gallery` page needs in one request:
+`GET /api/gallery` returns everything the `/gallery` page needs in one request:
 
 ```jsonc
 { "success": true, "data": { "categories": [ … ], "images": [ … ] } }
 ```
 
-### `GET` http://localhost:4000/api/v1/gallery/images/by-category/:categoryId 🌐
-
-Published images in one category — backs the tab switching.
-
-### Category fields
-
-`name` (**required**), `slug` (auto-generated, unique), `sort_order`, `published`.
-
-### Image fields
-
-`image_url` (**required**), `title`, `category_id` (UUID or `null`),
+**Category fields** — `name` (**required**), `slug` (auto-generated, unique),
 `sort_order`, `published`.
+**Image fields** — `image_url` (**required**), `title`, `category_id` (UUID or
+`null`), `sort_order`, `published`.
 
 > Deleting a category sets its images' `category_id` to `null` rather than
 > deleting them.
@@ -552,21 +474,21 @@ Published images in one category — backs the tab switching.
 ## 9. Meeting gallery
 
 ```
-http://localhost:4000/api/v1/meeting-gallery
+http://localhost:4000/api/meeting-gallery
 ```
 
 The homepage meeting-image strip.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `GET` | `http://localhost:4000/api/v1/meeting-gallery` | 🌐 |
-| 2 | `GET` | `http://localhost:4000/api/v1/meeting-gallery/admin` | 🔒 |
-| 3 | `PATCH` | `http://localhost:4000/api/v1/meeting-gallery/reorder` | 🔒 |
-| 4 | `GET` | `http://localhost:4000/api/v1/meeting-gallery/:id` | 🌐 |
-| 5 | `POST` | `http://localhost:4000/api/v1/meeting-gallery` | 🔒 |
-| 6 | `PUT` | `http://localhost:4000/api/v1/meeting-gallery/:id` | 🔒 |
-| 7 | `PATCH` | `http://localhost:4000/api/v1/meeting-gallery/:id` | 🔒 |
-| 8 | `DELETE` | `http://localhost:4000/api/v1/meeting-gallery/:id` | 🔒 |
+| 1 | `GET` | `http://localhost:4000/api/meeting-gallery` | 🌐 |
+| 2 | `GET` | `http://localhost:4000/api/meeting-gallery/admin` | 🔒 |
+| 3 | `PATCH` | `http://localhost:4000/api/meeting-gallery/reorder` | 🔒 |
+| 4 | `GET` | `http://localhost:4000/api/meeting-gallery/:id` | 🌐 |
+| 5 | `POST` | `http://localhost:4000/api/meeting-gallery` | 🔒 |
+| 6 | `PUT` | `http://localhost:4000/api/meeting-gallery/:id` | 🔒 |
+| 7 | `PATCH` | `http://localhost:4000/api/meeting-gallery/:id` | 🔒 |
+| 8 | `DELETE` | `http://localhost:4000/api/meeting-gallery/:id` | 🔒 |
 
 **Fields** — `image_url` (**required**), `title`, `sort_order`, `published`.
 
@@ -575,21 +497,21 @@ The homepage meeting-image strip.
 ## 10. Partner logos
 
 ```
-http://localhost:4000/api/v1/partner-logos
+http://localhost:4000/api/partner-logos
 ```
 
 The "trusted by" strip.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `GET` | `http://localhost:4000/api/v1/partner-logos` | 🌐 |
-| 2 | `GET` | `http://localhost:4000/api/v1/partner-logos/admin` | 🔒 |
-| 3 | `PATCH` | `http://localhost:4000/api/v1/partner-logos/reorder` | 🔒 |
-| 4 | `GET` | `http://localhost:4000/api/v1/partner-logos/:id` | 🌐 |
-| 5 | `POST` | `http://localhost:4000/api/v1/partner-logos` | 🔒 |
-| 6 | `PUT` | `http://localhost:4000/api/v1/partner-logos/:id` | 🔒 |
-| 7 | `PATCH` | `http://localhost:4000/api/v1/partner-logos/:id` | 🔒 |
-| 8 | `DELETE` | `http://localhost:4000/api/v1/partner-logos/:id` | 🔒 |
+| 1 | `GET` | `http://localhost:4000/api/partner-logos` | 🌐 |
+| 2 | `GET` | `http://localhost:4000/api/partner-logos/admin` | 🔒 |
+| 3 | `PATCH` | `http://localhost:4000/api/partner-logos/reorder` | 🔒 |
+| 4 | `GET` | `http://localhost:4000/api/partner-logos/:id` | 🌐 |
+| 5 | `POST` | `http://localhost:4000/api/partner-logos` | 🔒 |
+| 6 | `PUT` | `http://localhost:4000/api/partner-logos/:id` | 🔒 |
+| 7 | `PATCH` | `http://localhost:4000/api/partner-logos/:id` | 🔒 |
+| 8 | `DELETE` | `http://localhost:4000/api/partner-logos/:id` | 🔒 |
 
 **Fields** — `name` **or** `company_name` (**one required**), `image_url`,
 `website_url`, `sort_order`, `published`.
@@ -603,19 +525,19 @@ The "trusted by" strip.
 ## 11. Technology logos
 
 ```
-http://localhost:4000/api/v1/technology-logos
+http://localhost:4000/api/technology-logos
 ```
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `GET` | `http://localhost:4000/api/v1/technology-logos` | 🌐 |
-| 2 | `GET` | `http://localhost:4000/api/v1/technology-logos/admin` | 🔒 |
-| 3 | `PATCH` | `http://localhost:4000/api/v1/technology-logos/reorder` | 🔒 |
-| 4 | `GET` | `http://localhost:4000/api/v1/technology-logos/:id` | 🌐 |
-| 5 | `POST` | `http://localhost:4000/api/v1/technology-logos` | 🔒 |
-| 6 | `PUT` | `http://localhost:4000/api/v1/technology-logos/:id` | 🔒 |
-| 7 | `PATCH` | `http://localhost:4000/api/v1/technology-logos/:id` | 🔒 |
-| 8 | `DELETE` | `http://localhost:4000/api/v1/technology-logos/:id` | 🔒 |
+| 1 | `GET` | `http://localhost:4000/api/technology-logos` | 🌐 |
+| 2 | `GET` | `http://localhost:4000/api/technology-logos/admin` | 🔒 |
+| 3 | `PATCH` | `http://localhost:4000/api/technology-logos/reorder` | 🔒 |
+| 4 | `GET` | `http://localhost:4000/api/technology-logos/:id` | 🌐 |
+| 5 | `POST` | `http://localhost:4000/api/technology-logos` | 🔒 |
+| 6 | `PUT` | `http://localhost:4000/api/technology-logos/:id` | 🔒 |
+| 7 | `PATCH` | `http://localhost:4000/api/technology-logos/:id` | 🔒 |
+| 8 | `DELETE` | `http://localhost:4000/api/technology-logos/:id` | 🔒 |
 
 **Fields** — `name` (**required**), `image_url` (**required**), `sort_order`,
 `published`.
@@ -625,7 +547,7 @@ http://localhost:4000/api/v1/technology-logos
 ## 12. Showcase
 
 ```
-http://localhost:4000/api/v1/showcase
+http://localhost:4000/api/showcase
 ```
 
 The "Shipped Evidence" section: paired origin → enterprise-adaptation cards plus
@@ -633,44 +555,36 @@ a stat bar, placed per page.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `GET` | `http://localhost:4000/api/v1/showcase/page/:pageKey` | 🌐 |
-| 2 | `GET` | `http://localhost:4000/api/v1/showcase/items` | 🌐 |
-| 3 | `GET` | `http://localhost:4000/api/v1/showcase/items/admin` | 🔒 |
-| 4 | `GET` | `http://localhost:4000/api/v1/showcase/items/page/:pageKey` | 🌐 |
-| 5 | `PATCH` | `http://localhost:4000/api/v1/showcase/items/reorder` | 🔒 |
-| 6 | `GET` | `http://localhost:4000/api/v1/showcase/items/:id` | 🌐 |
-| 7 | `POST` | `http://localhost:4000/api/v1/showcase/items` | 🔒 |
-| 8 | `PUT` | `http://localhost:4000/api/v1/showcase/items/:id` | 🔒 |
-| 9 | `PATCH` | `http://localhost:4000/api/v1/showcase/items/:id` | 🔒 |
-| 10 | `DELETE` | `http://localhost:4000/api/v1/showcase/items/:id` | 🔒 |
-| 11 | `GET` | `http://localhost:4000/api/v1/showcase/stats` | 🌐 |
-| 12 | `GET` | `http://localhost:4000/api/v1/showcase/stats/admin` | 🔒 |
-| 13 | `PATCH` | `http://localhost:4000/api/v1/showcase/stats/reorder` | 🔒 |
-| 14 | `GET` | `http://localhost:4000/api/v1/showcase/stats/:id` | 🌐 |
-| 15 | `POST` | `http://localhost:4000/api/v1/showcase/stats` | 🔒 |
-| 16 | `PUT` | `http://localhost:4000/api/v1/showcase/stats/:id` | 🔒 |
-| 17 | `PATCH` | `http://localhost:4000/api/v1/showcase/stats/:id` | 🔒 |
-| 18 | `DELETE` | `http://localhost:4000/api/v1/showcase/stats/:id` | 🔒 |
-
-### `GET` http://localhost:4000/api/v1/showcase/page/:pageKey 🌐
+| 1 | `GET` | `http://localhost:4000/api/showcase/page/:pageKey` | 🌐 |
+| 2 | `GET` | `http://localhost:4000/api/showcase/items` | 🌐 |
+| 3 | `GET` | `http://localhost:4000/api/showcase/items/admin` | 🔒 |
+| 4 | `GET` | `http://localhost:4000/api/showcase/items/page/:pageKey` | 🌐 |
+| 5 | `PATCH` | `http://localhost:4000/api/showcase/items/reorder` | 🔒 |
+| 6 | `GET` | `http://localhost:4000/api/showcase/items/:id` | 🌐 |
+| 7 | `POST` | `http://localhost:4000/api/showcase/items` | 🔒 |
+| 8 | `PUT` | `http://localhost:4000/api/showcase/items/:id` | 🔒 |
+| 9 | `PATCH` | `http://localhost:4000/api/showcase/items/:id` | 🔒 |
+| 10 | `DELETE` | `http://localhost:4000/api/showcase/items/:id` | 🔒 |
+| 11 | `GET` | `http://localhost:4000/api/showcase/stats` | 🌐 |
+| 12 | `GET` | `http://localhost:4000/api/showcase/stats/admin` | 🔒 |
+| 13 | `PATCH` | `http://localhost:4000/api/showcase/stats/reorder` | 🔒 |
+| 14 | `GET` | `http://localhost:4000/api/showcase/stats/:id` | 🌐 |
+| 15 | `POST` | `http://localhost:4000/api/showcase/stats` | 🔒 |
+| 16 | `PUT` | `http://localhost:4000/api/showcase/stats/:id` | 🔒 |
+| 17 | `PATCH` | `http://localhost:4000/api/showcase/stats/:id` | 🔒 |
+| 18 | `DELETE` | `http://localhost:4000/api/showcase/stats/:id` | 🔒 |
 
 ```bash
-curl http://localhost:4000/api/v1/showcase/page/home
-curl http://localhost:4000/api/v1/showcase/page/service:ghl-setup
+curl http://localhost:4000/api/showcase/page/home
+curl http://localhost:4000/api/showcase/page/service:ghl-setup
 ```
 
-`pageKey` is `home` or `service:<slug>`.
+`pageKey` is `home` or `service:<slug>`. Returns `{ items, stats }`.
 
-```jsonc
-{ "success": true, "data": { "items": [ … ], "stats": [ … ] } }
-```
-
-### Item fields
-
-`origin_name` (**required**), `adaptation_name` (**required**), `origin_url`,
-`origin_icon`, `origin_description`, `origin_tagline`, `adaptation_badge`,
-`adaptation_description`, `adaptation_tags` (array or comma-separated),
-`sort_order`, `published`, plus:
+**Item fields** — `origin_name` (**required**), `adaptation_name`
+(**required**), `origin_url`, `origin_icon`, `origin_description`,
+`origin_tagline`, `adaptation_badge`, `adaptation_description`,
+`adaptation_tags` (array or comma-separated), `sort_order`, `published`, plus:
 
 ```jsonc
 "placements": [ { "page_key": "home", "sort_order": 1, "enabled": true } ]
@@ -679,28 +593,27 @@ curl http://localhost:4000/api/v1/showcase/page/service:ghl-setup
 Placements are **replaced wholesale** on write. Omitting the key leaves them
 alone; sending `[]` clears them. Deleting an item cascades to its placements.
 
-### Stat fields
-
-`value` (**required**), `label` (**required**), `sort_order`, `published`.
+**Stat fields** — `value` (**required**), `label` (**required**), `sort_order`,
+`published`.
 
 ---
 
 ## 13. Contact
 
 ```
-http://localhost:4000/api/v1/contact
+http://localhost:4000/api/contact
 ```
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `POST` | `http://localhost:4000/api/v1/contact/submit` | 🌐 20/hr |
-| 2 | `GET` | `http://localhost:4000/api/v1/contact/leads` | 🔒 |
-| 3 | `GET` | `http://localhost:4000/api/v1/contact/leads/stats` | 🔒 |
-| 4 | `GET` | `http://localhost:4000/api/v1/contact/leads/:id` | 🔒 |
-| 5 | `PATCH` | `http://localhost:4000/api/v1/contact/leads/:id/status` | 🔒 |
-| 6 | `DELETE` | `http://localhost:4000/api/v1/contact/leads/:id` | 🔒 |
+| 1 | `POST` | `http://localhost:4000/api/contact/submit` | 🌐 20/hr |
+| 2 | `GET` | `http://localhost:4000/api/contact/leads` | 🔒 |
+| 3 | `GET` | `http://localhost:4000/api/contact/leads/stats` | 🔒 |
+| 4 | `GET` | `http://localhost:4000/api/contact/leads/:id` | 🔒 |
+| 5 | `PATCH` | `http://localhost:4000/api/contact/leads/:id/status` | 🔒 |
+| 6 | `DELETE` | `http://localhost:4000/api/contact/leads/:id` | 🔒 |
 
-### `POST` http://localhost:4000/api/v1/contact/submit 🌐
+### `POST` http://localhost:4000/api/contact/submit 🌐
 
 Accepts both the original payload and the richer multi-step ContactPage payload.
 
@@ -716,35 +629,26 @@ Accepts both the original payload and the richer multi-step ContactPage payload.
 | `formStartedAt` | Epoch ms when the form rendered |
 
 ```bash
-curl -X POST http://localhost:4000/api/v1/contact/submit \
+curl -X POST http://localhost:4000/api/contact/submit \
   -H 'Content-Type: application/json' \
   -d '{"name":"Jane","email":"jane@acme.com","business_name":"Acme",
        "ghl_situation":"Messy setup","timeline":"ASAP","formStartedAt":1750000000000}'
 ```
 
 **Spam handling** — a filled `website`, or a form completed faster than
-`CONTACT_MIN_FILL_MS` (default 2500 ms), is treated as a bot: a normal `201` with
-`{ "spam": true }` and **nothing stored**, so bots get no signal.
+`CONTACT_MIN_FILL_MS` (default 2500 ms), is treated as a bot: a normal `201`
+with `{ "spam": true }` and **nothing stored**, so bots get no signal.
 
-**Ordering guarantee** — the lead is saved to the database *first*, then forwarded
-to the CRM webhook. A webhook outage returns `502`, but the lead is already safe.
+**Ordering guarantee** — the lead is saved to the database *first*, then
+forwarded to the CRM webhook. A webhook outage returns `502`, but the lead is
+already safe.
 
-### `GET` http://localhost:4000/api/v1/contact/leads 🔒
+### Inbox
 
-**Query** — `page`, `limit`, `search`, `status`
-
-```bash
-curl "http://localhost:4000/api/v1/contact/leads?status=NEW&page=1&limit=20" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-### `GET` http://localhost:4000/api/v1/contact/leads/stats 🔒
-
-Counts per status plus a total.
-
-### `PATCH` http://localhost:4000/api/v1/contact/leads/:id/status 🔒
+**Query (`GET /leads`)** — `page`, `limit`, `search`, `status`
 
 ```jsonc
+PATCH /api/contact/leads/:id/status
 { "status": "QUALIFIED", "notes": "Good fit — booked a call" }
 ```
 
@@ -755,22 +659,20 @@ Counts per status plus a total.
 ## 14. Service surveys
 
 ```
-http://localhost:4000/api/v1/service-surveys
+http://localhost:4000/api/service-surveys
 ```
 
 Submissions from the multi-step forms on every `/services/*` page.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `POST` | `http://localhost:4000/api/v1/service-surveys/submit` | 🌐 20/hr |
-| 2 | `GET` | `http://localhost:4000/api/v1/service-surveys/submissions` | 🔒 |
-| 3 | `GET` | `http://localhost:4000/api/v1/service-surveys/submissions/stats` | 🔒 |
-| 4 | `GET` | `http://localhost:4000/api/v1/service-surveys/submissions/:id` | 🔒 |
-| 5 | `GET` | `http://localhost:4000/api/v1/service-surveys/by-service` | 🔒 |
-| 6 | `PATCH` | `http://localhost:4000/api/v1/service-surveys/submissions/:id/status` | 🔒 |
-| 7 | `DELETE` | `http://localhost:4000/api/v1/service-surveys/submissions/:id` | 🔒 |
-
-### `POST` http://localhost:4000/api/v1/service-surveys/submit 🌐
+| 1 | `POST` | `http://localhost:4000/api/service-surveys/submit` | 🌐 20/hr |
+| 2 | `GET` | `http://localhost:4000/api/service-surveys/submissions` | 🔒 |
+| 3 | `GET` | `http://localhost:4000/api/service-surveys/submissions/stats` | 🔒 |
+| 4 | `GET` | `http://localhost:4000/api/service-surveys/submissions/:id` | 🔒 |
+| 5 | `GET` | `http://localhost:4000/api/service-surveys/by-service` | 🔒 |
+| 6 | `PATCH` | `http://localhost:4000/api/service-surveys/submissions/:id/status` | 🔒 |
+| 7 | `DELETE` | `http://localhost:4000/api/service-surveys/submissions/:id` | 🔒 |
 
 **Fields** — `email` (**required**), `name`, `phone`, `business`, `service`
 (which `/services/*` page), `source`, `role`, `business_type`, `stage`,
@@ -778,9 +680,7 @@ Submissions from the multi-step forms on every `/services/*` page.
 `details` (transcript of answers), `page_url`, plus the same `website` honeypot
 and `formStartedAt` timing check as the contact form.
 
-### `GET` http://localhost:4000/api/v1/service-surveys/by-service 🔒
-
-Which service pages actually produce leads:
+`GET /by-service` shows which service pages actually produce leads:
 
 ```jsonc
 [ { "service": "/services/ghl-setup", "count": 12 },
@@ -794,7 +694,7 @@ Shares the same status pipeline as contact leads.
 ## 15. Image uploads
 
 ```
-http://localhost:4000/api/v1/uploads
+http://localhost:4000/api/uploads
 ```
 
 Local files are uploaded to **Cloudinary**. The file is held in memory and
@@ -802,31 +702,31 @@ streamed straight through — nothing is written to the API server's disk.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `GET` | `http://localhost:4000/api/v1/uploads/status` | 🌐 |
-| 2 | `POST` | `http://localhost:4000/api/v1/uploads/image` | 🔒 |
-| 3 | `POST` | `http://localhost:4000/api/v1/uploads/images` | 🔒 |
-| 4 | `GET` | `http://localhost:4000/api/v1/uploads` | 🔒 |
-| 5 | `GET` | `http://localhost:4000/api/v1/uploads/signature` | 🔒 |
-| 6 | `DELETE` | `http://localhost:4000/api/v1/uploads/:id` | 🔒 |
-| 7 | `DELETE` | `http://localhost:4000/api/v1/uploads/public-id/<folder>/<name>` | 🔒 |
+| 1 | `GET` | `http://localhost:4000/api/uploads/status` | 🌐 |
+| 2 | `POST` | `http://localhost:4000/api/uploads/image` | 🔒 |
+| 3 | `POST` | `http://localhost:4000/api/uploads/images` | 🔒 |
+| 4 | `GET` | `http://localhost:4000/api/uploads` | 🔒 |
+| 5 | `GET` | `http://localhost:4000/api/uploads/signature` | 🔒 |
+| 6 | `DELETE` | `http://localhost:4000/api/uploads/:id` | 🔒 |
+| 7 | `DELETE` | `http://localhost:4000/api/uploads/public-id/<folder>/<name>` | 🔒 |
 
-### `GET` http://localhost:4000/api/v1/uploads/status 🌐
+### `GET` http://localhost:4000/api/uploads/status 🌐
 
 Lets the admin UI enable or disable its file picker before anyone tries.
 
 ```jsonc
-{ "configured": true, "folder": "ghlprime",
-  "max_file_size_mb": 10, "max_files": 10,
+{ "configured": true, "mode": "unsigned (preset: ghlprime)",
+  "folder": "ghlprime", "max_file_size_mb": 10, "max_files": 10,
   "allowed_types": ["image/jpeg","image/png","image/webp","image/gif",
                     "image/avif","image/svg+xml","image/bmp","image/tiff"] }
 ```
 
-### `POST` http://localhost:4000/api/v1/uploads/image 🔒
+### `POST` http://localhost:4000/api/uploads/image 🔒
 
 `multipart/form-data`, file field **`file`**.
 
 ```bash
-curl -X POST http://localhost:4000/api/v1/uploads/image \
+curl -X POST http://localhost:4000/api/uploads/image \
   -H "Authorization: Bearer $TOKEN" \
   -F "file=@./team-photo.png" \
   -F "alt=Team photo" \
@@ -840,40 +740,58 @@ curl -X POST http://localhost:4000/api/v1/uploads/image \
   "message": "Image uploaded successfully",
   "data": {
     "id": "…",
-    "public_id": "ghlprime/team/abc123",
+    "public_id": "ghlprime/vexrghyzgwbhjsziy6a5",
     "secure_url": "https://res.cloudinary.com/<cloud>/image/upload/v1/….png",
-    "url": "http://…", "format": "png", "width": 1200, "height": 800,
-    "bytes": 48210, "folder": "ghlprime/team",
-    "original_filename": "team-photo.png", "alt": "Team photo",
-    "tags": ["team","2026"], "created_at": "…"
+    "format": "png", "width": 1200, "height": 800, "bytes": 48210,
+    "folder": "ghlprime", "original_filename": "team-photo.png",
+    "alt": "Team photo", "tags": ["team","2026"], "created_at": "…"
   }
 }
 ```
 
 Take `secure_url` and store it in whichever `image_url` field you are editing.
+Optional text fields: `folder`, `alt`, `tags` (comma-separated).
 
-**Optional text fields** — `folder`, `alt`, `tags` (comma-separated).
-
-### `POST` http://localhost:4000/api/v1/uploads/images 🔒
+### `POST` http://localhost:4000/api/uploads/images 🔒
 
 Same, with file field **`files`** repeated. Returns
 `{ uploaded: [...], failed: [{ filename, reason }] }`. If *every* file fails, the
 underlying error is returned rather than a misleading `201`.
 
-### `GET` http://localhost:4000/api/v1/uploads 🔒
+### `GET` http://localhost:4000/api/uploads 🔒
 
 The media library. **Query** — `page`, `limit`, `search`.
 
-### `GET` http://localhost:4000/api/v1/uploads/signature 🔒
+### `GET` http://localhost:4000/api/uploads/signature 🔒
 
 A signature for uploading **straight from the browser to Cloudinary**, bypassing
 this API. Use it for files above the size limit. **Query** — `folder`.
 
-### `DELETE` http://localhost:4000/api/v1/uploads/:id 🔒
-### `DELETE` http://localhost:4000/api/v1/uploads/public-id/&lt;folder&gt;/&lt;name&gt; 🔒
+### `DELETE` http://localhost:4000/api/uploads/:id 🔒
 
-Removes the Cloudinary asset **first**, then the local row — a remote failure
-leaves the record intact rather than orphaning the file.
+Removes the media-library record and attempts to delete the remote file.
+
+```jsonc
+{ "public_id": "ghlprime/…", "deleted": true,
+  "remote_deleted": false, "remote_error": "…" }
+```
+
+> **Read `remote_deleted`.** Deleting from Cloudinary requires the account's
+> `delete` action. Where that is withheld, the local record is still removed —
+> otherwise the media library would be un-prunable — but the file **remains in
+> Cloudinary storage and keeps counting toward quota**. `remote_deleted: false`
+> tells you that happened.
+
+### Signed vs unsigned
+
+`CLOUDINARY_UPLOAD_PRESET` selects the mode:
+
+- **set** → unsigned upload through that preset. The preset authorises the
+  upload rather than the API key, which is the only path that works on a product
+  environment that denies keys the `create` action.
+- **unset** → normal signed upload using the API key.
+
+`GET /uploads/status` reports which mode is live.
 
 ### Constraints
 
@@ -884,56 +802,53 @@ leaves the record intact rather than orphaning the file.
 | Allowed types | jpeg, png, webp, gif, avif, svg, bmp, tiff | `400` |
 | Field name | must be `file` / `files` | `400` |
 
-> On Vercel the limit is clamped to 4 MB because the platform rejects request
-> bodies over ~4.5 MB before the function even runs. Use the signature flow for
-> anything larger. `GET /uploads/status` always reports the *enforced* number.
+> On Vercel the limit clamps to 4 MB because the platform rejects request bodies
+> over ~4.5 MB before the function runs. Use the signature flow for larger files.
 
 ### Failure modes
 
 | Response | Meaning |
 |---|---|
-| `503 CLOUDINARY_NOT_CONFIGURED` | Credentials absent — the message names the exact variables to set |
-| `502 CLOUDINARY_FORBIDDEN` | Key is valid but lacks upload permission. Fix in Cloudinary → **Settings → API Keys** by granting the key the `create` permission |
+| `503 CLOUDINARY_NOT_CONFIGURED` | Credentials absent — the message names the variables to set |
+| `502 CLOUDINARY_PRESET_NOT_FOUND` | `CLOUDINARY_UPLOAD_PRESET` names a preset that does not exist |
+| `502 CLOUDINARY_FORBIDDEN` | Signed upload refused. Use an unsigned preset, or enable the `create` action |
 
 ---
 
 ## 16. Sitemap
 
 ```
-http://localhost:4000/api/v1/sitemap
+http://localhost:4000/api/sitemap
 ```
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
-| 1 | `POST` | `http://localhost:4000/api/v1/sitemap/refresh` | Token-guarded |
-| 2 | `GET` | `http://localhost:4000/api/v1/sitemap/xml` | 🌐 |
+| 1 | `POST` | `http://localhost:4000/api/sitemap/refresh` | Token-guarded |
+| 2 | `GET` | `http://localhost:4000/api/sitemap/xml` | 🌐 |
 
 Also served at `http://localhost:4000/sitemap.xml`.
 
-### `POST` http://localhost:4000/api/v1/sitemap/refresh
-
-Open when `SITEMAP_REFRESH_TOKEN` is empty. When set, present it either way:
+`POST /refresh` is open when `SITEMAP_REFRESH_TOKEN` is empty. When set, present
+it either way:
 
 ```bash
-curl -X POST http://localhost:4000/api/v1/sitemap/refresh \
+curl -X POST http://localhost:4000/api/sitemap/refresh \
   -H "Authorization: Bearer $SITEMAP_REFRESH_TOKEN"
 
-curl -X POST http://localhost:4000/api/v1/sitemap/refresh \
+curl -X POST http://localhost:4000/api/sitemap/refresh \
   -H "X-Sitemap-Token: $SITEMAP_REFRESH_TOKEN"
 ```
 
-Wrong or missing token → `401`.
-
 ```jsonc
 // Local (writes public/sitemap.xml)
-{ "count": 45, "outputDir": "…/public", "written": true,  "mode": "file" }
+{ "count": 68, "outputDir": "…/public", "written": true,  "mode": "file" }
 
 // Serverless (read-only filesystem — served live instead)
-{ "count": 45, "outputDir": null,       "written": false, "mode": "dynamic" }
+{ "count": 68, "outputDir": null,       "written": false, "mode": "dynamic" }
 ```
 
-The sitemap also refreshes automatically after a case study or blog post changes,
-so this endpoint is mainly for deploy hooks and cron.
+The sitemap also refreshes automatically after a case study or blog post
+changes, so this endpoint is mainly for deploy hooks and cron.
 
 ---
 
@@ -941,13 +856,12 @@ so this endpoint is mainly for deploy hooks and cron.
 
 | # | Method | Full URL | Description |
 |---|---|---|---|
-| 1 | `GET` | `http://localhost:4000/api/v1/health` | Liveness — the process is up |
-| 2 | `GET` | `http://localhost:4000/api/v1/health/db` | Readiness — database round-trip with `latency_ms` |
+| 1 | `GET` | `http://localhost:4000/api/health` | Liveness — the process is up |
+| 2 | `GET` | `http://localhost:4000/api/health/db` | Readiness — Supabase round-trip with `latency_ms` |
 
 Both public, suitable for a load-balancer or uptime probe.
 
 ```jsonc
-// GET /api/v1/health/db
 { "ok": true, "database": "connected", "latency_ms": 34 }
 ```
 
@@ -958,20 +872,19 @@ Both public, suitable for a load-balancer or uptime probe.
 | # | Method | Full URL | Result |
 |---|---|---|---|
 | 1 | `GET` | `http://localhost:4000/` | Service banner |
-| 2 | `GET` | `http://localhost:4000/api/v1` | Self-describing index of every module |
+| 2 | `GET` | `http://localhost:4000/api` | Self-describing index of every module |
 | 3 | `GET` | `http://localhost:4000/sitemap.xml` | The sitemap |
 | 4 | `ALL` | `http://localhost:4000/free-scripts` | `410 Gone` with an HTML body |
 
-### `GET` http://localhost:4000/api/v1 🌐
-
 ```jsonc
+// GET /api
 {
   "success": true,
   "data": {
     "name": "GHL Prime API", "version": "1.0.0", "environment": "development",
     "endpoints": [
-      { "path": "/api/v1/health", "description": "Liveness and database readiness" },
-      { "path": "/api/v1/auth",   "description": "JWT authentication and user management" }
+      { "path": "/api/health", "description": "Liveness and database readiness" },
+      { "path": "/api/auth",   "description": "JWT authentication and user management" }
       // …14 modules
     ]
   }
@@ -982,32 +895,44 @@ Both public, suitable for a load-balancer or uptime probe.
 
 ## 19. Data model
 
-19 Prisma models. Table and column names are preserved from the original Supabase
-schema via `@@map`/`@map`, so existing rows keep working.
+18 tables in Supabase PostgreSQL. The API reaches them over PostgREST with the
+service-role key — there is no ORM and no Postgres connection string.
 
-| Model | Table | Purpose |
-|---|---|---|
-| `User` | `users` | Admin accounts (replaces Supabase Auth) |
-| `RefreshToken` | `refresh_tokens` | Hashed refresh tokens |
-| `CaseStudy` | `case_studies` | Case studies |
-| `CaseStudyTeamMember` | `case_study_team_members` | Join: study ↔ credited member |
-| `TeamMember` | `team_members` | Leadership profiles |
-| `TeamPageMember` | `team_page_members` | "Meet The Experts" profiles |
-| `BlogPost` | `blog_posts` | Blog |
-| `PartnerLogo` | `partner_logos` | "Trusted by" logos |
-| `TechnologyLogo` | `technology_logos` | Tech-stack logos |
-| `MeetingGalleryItem` | `meeting_gallery` | Homepage image strip |
-| `GalleryCategory` | `gallery_categories` | `/gallery` tabs |
-| `GalleryImage` | `gallery_images` | `/gallery` images |
-| `ShowcaseItem` | `showcase_items` | Shipped-Evidence cards |
-| `ShowcaseStat` | `showcase_stats` | Stat-bar tiles |
-| `ShowcasePlacement` | `showcase_placements` | Which item on which page |
-| `ContactLead` | `contact_leads` | Contact submissions |
-| `ServiceSurvey` | `service_surveys` | Service-page survey submissions |
-| `MediaAsset` | `media_assets` | Uploaded Cloudinary images |
+| Table | Purpose |
+|---|---|
+| `users` | Admin accounts (replaces Supabase Auth) |
+| `refresh_tokens` | Hashed refresh tokens |
+| `case_studies` | Case studies |
+| `case_study_team_members` | Join: study ↔ credited member |
+| `team_members` | Leadership profiles |
+| `team_page_members` | "Meet The Experts" profiles |
+| `blog_posts` | Blog |
+| `partner_logos` | "Trusted by" logos |
+| `technology_logos` | Tech-stack logos |
+| `meeting_gallery` | Homepage image strip |
+| `gallery_categories` | `/gallery` tabs |
+| `gallery_images` | `/gallery` images |
+| `showcase_items` | Shipped-Evidence cards |
+| `showcase_stats` | Stat-bar tiles |
+| `showcase_placements` | Which item on which page |
+| `contact_leads` | Contact submissions |
+| `service_surveys` | Service-page survey submissions |
+| `media_assets` | Uploaded Cloudinary images |
 
 **Enums** — `UserRole`: `ADMIN` · `EDITOR` · `VIEWER` ·
 `LeadStatus`: `NEW` · `CONTACTED` · `QUALIFIED` · `WON` · `LOST` · `ARCHIVED`
+
+### A note on transactions
+
+PostgREST exposes no multi-statement transactions, which shapes two behaviours:
+
+- **Reorder is atomic** — it reads the affected rows, merges the new positions,
+  and writes them back as one upsert, which Postgres applies as a single
+  statement.
+- **Relation syncing is not** — replacing case-study credits or showcase
+  placements is a delete followed by an insert. A failure between them leaves
+  the parent with *none* rather than duplicates: visible and correctable, which
+  is the safer direction.
 
 ---
 
