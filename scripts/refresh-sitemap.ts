@@ -6,7 +6,7 @@
  *   npm run sitemap:refresh
  */
 
-import { disconnectDatabase } from '../src/config/prisma.js'
+import { disconnectDatabase } from '../src/config/supabase.js'
 import sitemapService from '../src/modules/sitemap/sitemap.service.js'
 
 try {

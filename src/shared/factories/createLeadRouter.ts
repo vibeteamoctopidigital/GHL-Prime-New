@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z, type ZodTypeAny } from 'zod'
-import { LeadStatus } from '@prisma/client'
+import { LeadStatus, LEAD_STATUSES } from '../../config/constants.js'
 import validate from '../middleware/validate.js'
 import authenticate from '../middleware/authenticate.js'
 import { authorizeContentManager } from '../middleware/authorize.js'
@@ -25,8 +25,8 @@ export const leadStatusSchema = z.object({
   notes: z.string().trim().optional().nullable(),
 })
 
-export interface LeadRouterOptions<TBody, TRow extends { id: string }> {
-  service: LeadService<TRow>
+export interface LeadRouterOptions<TBody> {
+  service: LeadService
   /** Validates the public submission body. */
   submitSchema: ZodTypeAny
   /** Runs the actual submission (spam check, persist, forward). */
@@ -48,13 +48,13 @@ export interface LeadRouterOptions<TBody, TRow extends { id: string }> {
  *   PATCH  /<inbox>/:id/status    move through the pipeline
  *   DELETE /<inbox>/:id           remove
  */
-export function createLeadRouter<TBody, TRow extends { id: string }>({
+export function createLeadRouter<TBody>({
   service,
   submitSchema,
   submit,
   label,
   inboxPath = '/leads',
-}: LeadRouterOptions<TBody, TRow>): Router {
+}: LeadRouterOptions<TBody>): Router {
   const router = Router()
   const inbox = Router()
   const guard = [authenticate, authorizeContentManager]

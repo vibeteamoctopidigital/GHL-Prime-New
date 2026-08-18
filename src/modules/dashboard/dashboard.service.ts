@@ -1,4 +1,4 @@
-import prisma from '../../config/prisma.js'
+import supabase from '../../config/supabase.js'
 
 export interface ContentCounts {
   case_studies: { total: number; published: number; drafts: number }
@@ -17,10 +17,19 @@ export interface ContentCounts {
 }
 
 export interface RecentActivity {
-  case_studies: { id: string; title: string; slug: string; published: boolean | null; updated_at: Date }[]
-  blog_posts: { id: string; title: string; slug: string; published: boolean | null; updated_at: Date }[]
-  contact_leads: { id: string; full_name: string | null; email: string | null; submitted_at: Date }[]
-  service_surveys: { id: string; name: string | null; service: string | null; submitted_at: Date }[]
+  case_studies: Record<string, unknown>[]
+  blog_posts: Record<string, unknown>[]
+  contact_leads: Record<string, unknown>[]
+  service_surveys: Record<string, unknown>[]
+}
+
+/** `head: true` returns only the count — no rows cross the wire. */
+async function countRows(table: string, filter?: { column: string; value: unknown }): Promise<number> {
+  let query = supabase.from(table).select('id', { count: 'exact', head: true })
+  if (filter) query = query.eq(filter.column, filter.value as never)
+
+  const { count } = await query
+  return count ?? 0
 }
 
 /**
@@ -48,23 +57,23 @@ class DashboardService {
       surveyTotal,
       surveyNew,
     ] = await Promise.all([
-      prisma.caseStudy.count(),
-      prisma.caseStudy.count({ where: { published: true } }),
-      prisma.blogPost.count(),
-      prisma.blogPost.count({ where: { published: true } }),
-      prisma.teamMember.count(),
-      prisma.teamPageMember.count(),
-      prisma.galleryCategory.count(),
-      prisma.galleryImage.count(),
-      prisma.meetingGalleryItem.count(),
-      prisma.partnerLogo.count(),
-      prisma.technologyLogo.count(),
-      prisma.showcaseItem.count(),
-      prisma.showcaseStat.count(),
-      prisma.contactLead.count(),
-      prisma.contactLead.count({ where: { status: 'NEW' } }),
-      prisma.serviceSurvey.count(),
-      prisma.serviceSurvey.count({ where: { status: 'NEW' } }),
+      countRows('case_studies'),
+      countRows('case_studies', { column: 'published', value: true }),
+      countRows('blog_posts'),
+      countRows('blog_posts', { column: 'published', value: true }),
+      countRows('team_members'),
+      countRows('team_page_members'),
+      countRows('gallery_categories'),
+      countRows('gallery_images'),
+      countRows('meeting_gallery'),
+      countRows('partner_logos'),
+      countRows('technology_logos'),
+      countRows('showcase_items'),
+      countRows('showcase_stats'),
+      countRows('contact_leads'),
+      countRows('contact_leads', { column: 'status', value: 'NEW' }),
+      countRows('service_surveys'),
+      countRows('service_surveys', { column: 'status', value: 'NEW' }),
     ])
 
     return {
@@ -88,46 +97,30 @@ class DashboardService {
     }
   }
 
-  /** The five most recently touched records in each collection. */
+  /** The most recently touched records in each collection. */
   async recent(limit = 5): Promise<RecentActivity> {
+    const recentRows = async (table: string, columns: string, orderColumn: string) => {
+      const { data } = await supabase
+        .from(table)
+        .select(columns)
+        .order(orderColumn, { ascending: false })
+        .limit(limit)
+
+      return (data ?? []) as unknown as Record<string, unknown>[]
+    }
+
     const [caseStudies, blogPosts, contactLeads, serviceSurveys] = await Promise.all([
-      prisma.caseStudy.findMany({
-        take: limit,
-        orderBy: { updatedAt: 'desc' },
-        select: { id: true, title: true, slug: true, published: true, updatedAt: true },
-      }),
-      prisma.blogPost.findMany({
-        take: limit,
-        orderBy: { updatedAt: 'desc' },
-        select: { id: true, title: true, slug: true, published: true, updatedAt: true },
-      }),
-      prisma.contactLead.findMany({
-        take: limit,
-        orderBy: { submittedAt: 'desc' },
-        select: { id: true, fullName: true, email: true, submittedAt: true },
-      }),
-      prisma.serviceSurvey.findMany({
-        take: limit,
-        orderBy: { submittedAt: 'desc' },
-        select: { id: true, name: true, service: true, submittedAt: true },
-      }),
+      recentRows('case_studies', 'id, title, slug, published, updated_at', 'updated_at'),
+      recentRows('blog_posts', 'id, title, slug, published, updated_at', 'updated_at'),
+      recentRows('contact_leads', 'id, full_name, email, submitted_at', 'submitted_at'),
+      recentRows('service_surveys', 'id, name, service, submitted_at', 'submitted_at'),
     ])
 
     return {
-      case_studies: caseStudies.map((row) => ({ ...row, updated_at: row.updatedAt })),
-      blog_posts: blogPosts.map((row) => ({ ...row, updated_at: row.updatedAt })),
-      contact_leads: contactLeads.map((row) => ({
-        id: row.id,
-        full_name: row.fullName,
-        email: row.email,
-        submitted_at: row.submittedAt,
-      })),
-      service_surveys: serviceSurveys.map((row) => ({
-        id: row.id,
-        name: row.name,
-        service: row.service,
-        submitted_at: row.submittedAt,
-      })),
+      case_studies: caseStudies,
+      blog_posts: blogPosts,
+      contact_leads: contactLeads,
+      service_surveys: serviceSurveys,
     }
   }
 }

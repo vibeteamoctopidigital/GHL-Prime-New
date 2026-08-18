@@ -1,33 +1,25 @@
-import type { CaseStudy } from '@prisma/client'
-import prisma from '../../config/prisma.js'
+import supabase from '../../config/supabase.js'
 import BaseService from '../../shared/services/BaseService.js'
-import { defaultSerializer } from '../../shared/serializers/caseTransform.js'
 import { buildUniqueSlug } from '../../shared/utils/slug.js'
 import ApiError from '../../shared/utils/ApiError.js'
 import type { SerializedRow } from '../../types/common.js'
 
 /** Mirrors the old Supabase embed: assigned_team_members -> team_member. */
-const CASE_STUDY_INCLUDE = {
-  assignedTeamMembers: {
-    include: { teamMember: true },
-    orderBy: { createdAt: 'asc' },
-  },
-} as const
+const CASE_STUDY_SELECT = '*, assigned_team_members:case_study_team_members(*, team_member:team_members(*))'
 
 export interface CaseStudyListOptions {
   category?: string | undefined
   search?: string | undefined
 }
 
-class CaseStudyService extends BaseService<CaseStudy> {
+class CaseStudyService extends BaseService {
   constructor() {
     super({
-      model: prisma.caseStudy,
+      table: 'case_studies',
       resourceName: 'Case study',
-      defaultOrderBy: { createdAt: 'desc' },
-      defaultInclude: CASE_STUDY_INCLUDE,
+      defaultOrderBy: [{ column: 'created_at', ascending: false }],
+      select: CASE_STUDY_SELECT,
       searchableFields: ['title', 'category', 'excerpt', 'subtitle'],
-      serialize: defaultSerializer,
     })
   }
 
@@ -51,21 +43,29 @@ class CaseStudyService extends BaseService<CaseStudy> {
     return record
   }
 
-  /** Replaces the study's team assignments in one transaction. */
+  /**
+   * Replaces the study's team assignments.
+   *
+   * Delete-then-insert; PostgREST cannot wrap the pair in a transaction, so a
+   * failure between them leaves the study with no credits rather than
+   * duplicates — visible and correctable.
+   */
   async syncTeamAssignments(caseStudyId: string, teamMemberIds: string[] = []): Promise<number> {
-    const uniqueIds = [...new Set(teamMemberIds.filter(Boolean))]
+    const { error: deleteError } = await supabase
+      .from('case_study_team_members')
+      .delete()
+      .eq('case_study_id', caseStudyId)
 
-    await prisma.$transaction([
-      prisma.caseStudyTeamMember.deleteMany({ where: { caseStudyId } }),
-      ...(uniqueIds.length > 0
-        ? [
-            prisma.caseStudyTeamMember.createMany({
-              data: uniqueIds.map((teamMemberId) => ({ caseStudyId, teamMemberId })),
-              skipDuplicates: true,
-            }),
-          ]
-        : []),
-    ])
+    if (deleteError) throw ApiError.internal(`Could not clear team assignments: ${deleteError.message}`)
+
+    const uniqueIds = [...new Set(teamMemberIds.filter(Boolean))]
+    if (uniqueIds.length === 0) return 0
+
+    const { error } = await supabase
+      .from('case_study_team_members')
+      .insert(uniqueIds.map((teamMemberId) => ({ case_study_id: caseStudyId, team_member_id: teamMemberId })))
+
+    if (error) throw ApiError.internal(`Could not assign team members: ${error.message}`)
 
     return uniqueIds.length
   }
@@ -99,14 +99,30 @@ class CaseStudyService extends BaseService<CaseStudy> {
 
   /** Distinct categories with a count — powers the case-study filter bar. */
   async listCategories(): Promise<{ category: string; count: number }[]> {
-    const grouped = await prisma.caseStudy.groupBy({
-      by: ['category'],
-      where: { published: true },
-      _count: { category: true },
-      orderBy: { category: 'asc' },
-    })
+    const { data, error } = await supabase.from('case_studies').select('category').eq('published', true)
+    if (error) throw ApiError.internal(`Could not load categories: ${error.message}`)
 
-    return grouped.map((row) => ({ category: row.category, count: row._count.category }))
+    const counts = new Map<string, number>()
+    for (const row of data ?? []) {
+      const category = (row as { category: string }).category
+      if (category) counts.set(category, (counts.get(category) ?? 0) + 1)
+    }
+
+    return [...counts.entries()]
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => a.category.localeCompare(b.category))
+  }
+
+  /** Slug + updated_at for every published study — used to build the sitemap. */
+  async listPublishedSlugs(): Promise<{ slug: string; updated_at: string }[]> {
+    const { data, error } = await supabase
+      .from('case_studies')
+      .select('slug, updated_at')
+      .eq('published', true)
+      .order('created_at', { ascending: false })
+
+    if (error) throw ApiError.internal(`Could not load case study slugs: ${error.message}`)
+    return (data ?? []) as { slug: string; updated_at: string }[]
   }
 }
 

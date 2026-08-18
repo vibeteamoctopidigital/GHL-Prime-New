@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import env from '../../config/env.js'
-import prisma from '../../config/prisma.js'
+import caseStudyService from '../case-studies/caseStudy.service.js'
+import blogService from '../blog/blog.service.js'
 import logger from '../../shared/utils/logger.js'
 
 export interface SitemapRoute {
@@ -56,7 +57,7 @@ ${urls}
 `
 }
 
-const toIso = (value: Date | null | undefined): string | undefined => (value ? new Date(value).toISOString() : undefined)
+const toIso = (value: string | Date | null | undefined): string | undefined => (value ? new Date(value).toISOString() : undefined)
 
 export interface SitemapRefreshResult {
   count: number
@@ -71,22 +72,14 @@ class SitemapService {
   /** Collects published case studies and blog posts into route entries. */
   async collectRoutes(): Promise<SitemapRoute[]> {
     const [studies, posts] = await Promise.all([
-      prisma.caseStudy.findMany({
-        where: { published: true },
-        select: { slug: true, updatedAt: true },
-        orderBy: { createdAt: 'desc' },
-      }),
-      prisma.blogPost.findMany({
-        where: { published: true },
-        select: { slug: true, updatedAt: true },
-        orderBy: { publishedAt: 'desc' },
-      }),
+      caseStudyService.listPublishedSlugs(),
+      blogService.listPublishedSlugs(),
     ])
 
     const seen = new Set<string>()
     const dynamicRoutes: SitemapRoute[] = []
 
-    const add = (prefix: string, rows: { slug: string; updatedAt: Date }[], priority: string): void => {
+    const add = (prefix: string, rows: { slug: string; updated_at: string }[], priority: string): void => {
       for (const row of rows) {
         if (!row.slug?.trim()) continue
 
@@ -94,7 +87,7 @@ class SitemapService {
         if (seen.has(routePath)) continue
         seen.add(routePath)
 
-        dynamicRoutes.push({ path: routePath, changefreq: 'monthly', priority, lastmod: toIso(row.updatedAt) })
+        dynamicRoutes.push({ path: routePath, changefreq: 'monthly', priority, lastmod: toIso(row.updated_at) })
       }
     }
 

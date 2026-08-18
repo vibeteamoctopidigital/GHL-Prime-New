@@ -1,17 +1,13 @@
-import type { GalleryCategory, GalleryImage } from '@prisma/client'
-import prisma from '../../config/prisma.js'
 import SortableService from '../../shared/services/SortableService.js'
-import { defaultSerializer } from '../../shared/serializers/caseTransform.js'
 import { buildUniqueSlug } from '../../shared/utils/slug.js'
 import type { SerializedRow } from '../../types/common.js'
 
-class GalleryCategoryService extends SortableService<GalleryCategory> {
+class GalleryCategoryService extends SortableService {
   constructor() {
     super({
-      model: prisma.galleryCategory,
+      table: 'gallery_categories',
       resourceName: 'Gallery category',
       searchableFields: ['name', 'slug'],
-      serialize: defaultSerializer,
     })
   }
 
@@ -42,20 +38,19 @@ class GalleryCategoryService extends SortableService<GalleryCategory> {
   }
 }
 
-class GalleryImageService extends SortableService<GalleryImage> {
+class GalleryImageService extends SortableService {
   constructor() {
     super({
-      model: prisma.galleryImage,
+      table: 'gallery_images',
       resourceName: 'Gallery image',
       searchableFields: ['title'],
-      serialize: defaultSerializer,
     })
   }
 
   /** Images filtered to one category — backs the /gallery tab switching. */
   listByCategory(categoryId: string, { includeUnpublished = false } = {}): Promise<SerializedRow[]> {
     return this.list({
-      where: { categoryId, ...(includeUnpublished ? {} : { published: true }) },
+      where: { category_id: categoryId, ...(includeUnpublished ? {} : { published: true }) },
     })
   }
 }

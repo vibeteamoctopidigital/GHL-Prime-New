@@ -57,4 +57,7 @@ export const PAGINATION = {
 } as const
 
 /** Ordering used by every "sortable" resource: sort_order, then oldest first. */
-export const SORTABLE_ORDER_BY = [{ sortOrder: 'asc' }, { createdAt: 'asc' }]
+export const SORTABLE_ORDER_BY = [
+  { column: 'sort_order', ascending: true },
+  { column: 'created_at', ascending: true },
+]

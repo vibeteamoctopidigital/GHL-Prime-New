@@ -1,11 +1,11 @@
-import type { ShowcaseItem, ShowcaseStat } from '@prisma/client'
-import prisma from '../../config/prisma.js'
+import supabase from '../../config/supabase.js'
 import SortableService from '../../shared/services/SortableService.js'
-import { defaultSerializer } from '../../shared/serializers/caseTransform.js'
+import ApiError from '../../shared/utils/ApiError.js'
 import { DEFAULT_SORT_ORDER } from '../../config/constants.js'
 import type { SerializedRow } from '../../types/common.js'
 
-const ITEM_INCLUDE = { placements: true } as const
+/** Embeds each item's placements, mirroring the old ORM include. */
+const ITEM_SELECT = '*, placements:showcase_placements(*)'
 
 export interface PlacementInput {
   pageKey: string
@@ -13,14 +13,13 @@ export interface PlacementInput {
   enabled?: boolean
 }
 
-class ShowcaseItemService extends SortableService<ShowcaseItem> {
+class ShowcaseItemService extends SortableService {
   constructor() {
     super({
-      model: prisma.showcaseItem,
+      table: 'showcase_items',
       resourceName: 'Showcase item',
-      searchableFields: ['originName', 'adaptationName'],
-      defaultInclude: ITEM_INCLUDE,
-      serialize: defaultSerializer,
+      searchableFields: ['origin_name', 'adaptation_name'],
+      select: ITEM_SELECT,
     })
   }
 
@@ -31,33 +30,48 @@ class ShowcaseItemService extends SortableService<ShowcaseItem> {
   async listForPage(pageKey: string): Promise<SerializedRow[]> {
     if (!pageKey) return []
 
-    const rows = await prisma.showcasePlacement.findMany({
-      where: { pageKey, enabled: true, item: { published: true } },
-      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-      include: { item: { include: ITEM_INCLUDE } },
-    })
+    const { data, error } = await supabase
+      .from('showcase_placements')
+      .select(`sort_order, enabled, item:showcase_items!inner(${ITEM_SELECT})`)
+      .eq('page_key', pageKey)
+      .eq('enabled', true)
+      .eq('showcase_items.published', true)
+      .order('sort_order', { ascending: true })
 
-    return rows.map((row) => this.serialize(row.item))
+    if (error) throw ApiError.internal(`Could not load showcase page: ${error.message}`)
+
+    return (data ?? [])
+      .map((row) => (row as Record<string, unknown>)['item'] as SerializedRow | null)
+      .filter((item): item is SerializedRow => Boolean(item))
+      .map((item) => this.serialize(item))
   }
 
   /**
-   * Replaces an item's placements wholesale (delete-then-insert), inside a
-   * transaction so the item is never briefly placed nowhere.
+   * Replaces an item's placements wholesale.
+   *
+   * PostgREST has no transactions, so this is a delete followed by an insert
+   * rather than one atomic statement. The window between them is brief and the
+   * insert is retried by nothing — if it fails the item is left with no
+   * placements, which is visible and correctable, rather than silently
+   * duplicated.
    */
   async syncPlacements(itemId: string, placements: PlacementInput[] = []): Promise<number> {
+    const { error: deleteError } = await supabase.from('showcase_placements').delete().eq('item_id', itemId)
+    if (deleteError) throw ApiError.internal(`Could not clear placements: ${deleteError.message}`)
+
     const rows = placements
       .filter((placement) => Boolean(placement?.pageKey))
       .map((placement) => ({
-        itemId,
-        pageKey: placement.pageKey,
-        sortOrder: Number(placement.sortOrder) || DEFAULT_SORT_ORDER,
+        item_id: itemId,
+        page_key: placement.pageKey,
+        sort_order: Number(placement.sortOrder) || DEFAULT_SORT_ORDER,
         enabled: placement.enabled !== false,
       }))
 
-    await prisma.$transaction([
-      prisma.showcasePlacement.deleteMany({ where: { itemId } }),
-      ...(rows.length > 0 ? [prisma.showcasePlacement.createMany({ data: rows, skipDuplicates: true })] : []),
-    ])
+    if (rows.length === 0) return 0
+
+    const { error } = await supabase.from('showcase_placements').insert(rows)
+    if (error) throw ApiError.internal(`Could not set placements: ${error.message}`)
 
     return rows.length
   }
@@ -80,13 +94,17 @@ class ShowcaseItemService extends SortableService<ShowcaseItem> {
 
     return this.findByIdOrFail(id)
   }
+
+  /** Placements cascade in the database, so only the item is deleted here. */
+  override async remove(id: string) {
+    return super.remove(id)
+  }
 }
 
 export const showcaseItemService = new ShowcaseItemService()
 
-export const showcaseStatService = new SortableService<ShowcaseStat>({
-  model: prisma.showcaseStat,
+export const showcaseStatService = new SortableService({
+  table: 'showcase_stats',
   resourceName: 'Showcase stat',
   searchableFields: ['label', 'value'],
-  serialize: defaultSerializer,
 })

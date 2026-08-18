@@ -1,42 +1,10 @@
 import type { ErrorRequestHandler, RequestHandler } from 'express'
-import { Prisma } from '@prisma/client'
 import { ZodError } from 'zod'
 import env from '../../config/env.js'
 import { HTTP_STATUS } from '../../config/constants.js'
 import ApiError from '../utils/ApiError.js'
 import logger from '../utils/logger.js'
 import { sendError } from '../utils/ApiResponse.js'
-
-/** Turns Prisma's error codes into meaningful HTTP responses. */
-function mapPrismaError(error: unknown): ApiError | null {
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    const rawTarget = error.meta?.['target']
-    const target = Array.isArray(rawTarget) ? rawTarget.join(', ') : (rawTarget as string | undefined)
-
-    switch (error.code) {
-      case 'P2002':
-        return ApiError.conflict(target ? `A record with this ${target} already exists` : 'Record already exists')
-      case 'P2003':
-        return ApiError.badRequest('Related record does not exist')
-      case 'P2014':
-        return ApiError.badRequest('This change would break a required relation')
-      case 'P2025':
-        return ApiError.notFound((error.meta?.['cause'] as string | undefined) ?? 'Record not found')
-      default:
-        return ApiError.badRequest('Database request failed', { code: error.code })
-    }
-  }
-
-  if (error instanceof Prisma.PrismaClientValidationError) {
-    return ApiError.badRequest('Invalid data supplied to the database query')
-  }
-
-  if (error instanceof Prisma.PrismaClientInitializationError) {
-    return ApiError.internal('Could not connect to the database')
-  }
-
-  return null
-}
 
 function normalize(error: unknown): ApiError | null {
   if (error instanceof ApiError) return error
@@ -46,9 +14,6 @@ function normalize(error: unknown): ApiError | null {
       details: error.issues.map((issue) => ({ field: issue.path.join('.'), message: issue.message })),
     })
   }
-
-  const prismaError = mapPrismaError(error)
-  if (prismaError) return prismaError
 
   // Body-parser rejects malformed JSON with a SyntaxError carrying a status.
   if (error instanceof SyntaxError && (error as SyntaxError & { status?: number }).status === 400 && 'body' in error) {

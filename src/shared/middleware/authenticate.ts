@@ -1,24 +1,22 @@
 import type { RequestHandler } from 'express'
-import prisma from '../../config/prisma.js'
+import supabase from '../../config/supabase.js'
 import ApiError from '../utils/ApiError.js'
 import asyncHandler from '../utils/asyncHandler.js'
 import { extractBearerToken, verifyAccessToken } from '../utils/token.js'
 import type { AuthenticatedUser } from '../../types/common.js'
 
-const USER_SELECT = { id: true, email: true, fullName: true, role: true, isActive: true } as const
+const USER_COLUMNS = 'id, email, full_name, role, is_active'
 
 async function resolveUser(token: string): Promise<AuthenticatedUser> {
   const payload = verifyAccessToken(token)
 
-  const user = await prisma.user.findUnique({
-    where: { id: payload.sub },
-    select: USER_SELECT,
-  })
+  const { data } = await supabase.from('users').select(USER_COLUMNS).eq('id', payload.sub).maybeSingle()
+  const row = data as { id: string; email: string; full_name: string | null; role: AuthenticatedUser['role']; is_active: boolean } | null
 
-  if (!user) throw ApiError.unauthorized('Account no longer exists')
-  if (!user.isActive) throw ApiError.forbidden('Account has been deactivated')
+  if (!row) throw ApiError.unauthorized('Account no longer exists')
+  if (!row.is_active) throw ApiError.forbidden('Account has been deactivated')
 
-  return user
+  return { id: row.id, email: row.email, fullName: row.full_name, role: row.role, isActive: row.is_active }
 }
 
 const readToken = (req: Parameters<RequestHandler>[0]): string | null =>

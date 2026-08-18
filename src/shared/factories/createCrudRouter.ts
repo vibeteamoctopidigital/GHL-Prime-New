@@ -7,15 +7,15 @@ import createCrudController, { type CrudController } from './createCrudControlle
 import { idParamSchema, reorderSchema, searchQuerySchema } from '../validators/common.validators.js'
 import type SortableService from '../services/SortableService.js'
 
-export interface CrudRouterContext<TRow extends { id: string }> {
+export interface CrudRouterContext {
   controller: CrudController
-  service: SortableService<TRow>
+  service: SortableService
   guard: RequestHandler[]
 }
 
-export interface CrudRouterOptions<TRow extends { id: string }> {
+export interface CrudRouterOptions {
   /** A SortableService instance. */
-  service: SortableService<TRow>
+  service: SortableService
   createSchema: ZodTypeAny
   updateSchema: ZodTypeAny
   /** Used in response messages. */
@@ -25,7 +25,7 @@ export interface CrudRouterOptions<TRow extends { id: string }> {
   /** Mount PATCH /reorder. Default true. */
   reorderable?: boolean
   /** Hook to add routes before the `/:id` patterns are registered. */
-  extend?: (router: Router, context: CrudRouterContext<TRow>) => void
+  extend?: (router: Router, context: CrudRouterContext) => void
 }
 
 /**
@@ -41,7 +41,7 @@ export interface CrudRouterOptions<TRow extends { id: string }> {
  *   PATCH  /:id         update                          (auth)
  *   DELETE /:id         delete                          (auth)
  */
-export function createCrudRouter<TRow extends { id: string }>({
+export function createCrudRouter({
   service,
   createSchema,
   updateSchema,
@@ -49,7 +49,7 @@ export function createCrudRouter<TRow extends { id: string }>({
   controller: overrides = {},
   reorderable = true,
   extend,
-}: CrudRouterOptions<TRow>): Router {
+}: CrudRouterOptions): Router {
   const router = Router()
   const controller: CrudController = { ...createCrudController(service, label), ...overrides }
 

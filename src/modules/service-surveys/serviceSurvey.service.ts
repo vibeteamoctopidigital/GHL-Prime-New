@@ -1,8 +1,5 @@
-import type { ServiceSurvey } from '@prisma/client'
-import prisma from '../../config/prisma.js'
 import env from '../../config/env.js'
 import LeadService from '../../shared/services/LeadService.js'
-import { defaultSerializer } from '../../shared/serializers/caseTransform.js'
 import logger from '../../shared/utils/logger.js'
 import type { SerializedRow } from '../../types/common.js'
 import type { SurveySubmitBody } from './serviceSurvey.validators.js'
@@ -17,15 +14,14 @@ export interface SpamOutcome {
  * (ServiceSurveyForm.jsx). These previously went straight to the CRM webhook
  * and were never stored, so the admin panel had no record of them.
  */
-class ServiceSurveyService extends LeadService<ServiceSurvey> {
+class ServiceSurveyService extends LeadService {
   constructor() {
     super({
-      model: prisma.serviceSurvey,
+      table: 'service_surveys',
       resourceName: 'Service survey',
       // Falls back to the contact webhook, which is where these already went.
       webhookUrl: env.SURVEY_WEBHOOK_URL || env.CONTACT_WEBHOOK_URL,
       searchableFields: ['name', 'email', 'business', 'service', 'needs', 'details'],
-      serialize: defaultSerializer,
     })
   }
 
@@ -55,7 +51,7 @@ class ServiceSurveyService extends LeadService<ServiceSurvey> {
       coverage: input.coverage || null,
       details: input.details || null,
       pageUrl: input.pageUrl || null,
-      submittedAt,
+      submittedAt: submittedAt.toISOString(),
     }
 
     // Field names match exactly what ServiceSurveyForm already posted, so the
@@ -86,15 +82,17 @@ class ServiceSurveyService extends LeadService<ServiceSurvey> {
 
   /** Submission counts per service page — which pages actually convert. */
   async countsByService(): Promise<{ service: string; count: number }[]> {
-    const grouped = await prisma.serviceSurvey.groupBy({
-      by: ['service'],
-      _count: { service: true },
-      orderBy: { service: 'asc' },
-    })
+    const rows = await this.list({ select: 'service' })
 
-    return grouped
-      .filter((row): row is typeof row & { service: string } => row.service !== null)
-      .map((row) => ({ service: row.service, count: row._count.service }))
+    const counts = new Map<string, number>()
+    for (const row of rows) {
+      const service = row['service'] as string | null
+      if (service) counts.set(service, (counts.get(service) ?? 0) + 1)
+    }
+
+    return [...counts.entries()]
+      .map(([service, count]) => ({ service, count }))
+      .sort((a, b) => a.service.localeCompare(b.service))
   }
 }
 

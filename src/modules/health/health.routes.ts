@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import prisma from '../../config/prisma.js'
+import supabase from '../../config/supabase.js'
 import env from '../../config/env.js'
 import asyncHandler from '../../shared/utils/asyncHandler.js'
 import { sendError, sendOk } from '../../shared/utils/ApiResponse.js'
@@ -23,19 +23,20 @@ router.get('/', (_req, res) => {
   )
 })
 
-/** Readiness — also proves the database round-trips. */
+/** Readiness — also proves Supabase round-trips. */
 router.get(
   '/db',
   asyncHandler(async (_req, res) => {
     const start = Date.now()
 
-    try {
-      await prisma.$queryRaw`SELECT 1`
-    } catch (error) {
+    // head:true asks for the count only, so no rows cross the wire.
+    const { error } = await supabase.from('case_studies').select('id', { head: true, count: 'exact' })
+
+    if (error) {
       return sendError(res, {
         message: 'Database unreachable',
         statusCode: HTTP_STATUS.INTERNAL_SERVER_ERROR,
-        errors: { reason: error instanceof Error ? error.message : 'unknown' },
+        errors: { reason: error.message },
       })
     }
 

@@ -21,8 +21,8 @@ export interface CrudController {
  *
  *   const controller = { ...createCrudController(service, 'Blog post'), publish }
  */
-export function createCrudController<TRow extends { id: string }>(
-  service: SortableService<TRow>,
+export function createCrudController(
+  service: SortableService,
   label: string = service.resourceName,
 ): CrudController {
   return {

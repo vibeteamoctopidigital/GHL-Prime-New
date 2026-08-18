@@ -1,23 +1,29 @@
-import type { User, UserRole } from '@prisma/client'
-import prisma from '../../config/prisma.js'
+import supabase from '../../config/supabase.js'
 import env from '../../config/env.js'
-import { ROLES } from '../../config/constants.js'
+import { UserRole } from '../../config/constants.js'
 import ApiError from '../../shared/utils/ApiError.js'
 import { comparePassword, hashPassword } from '../../shared/utils/password.js'
-import { expiresInToMs, hashToken, signAccessToken, signRefreshToken, verifyRefreshToken } from '../../shared/utils/token.js'
+import {
+  expiresInToMs,
+  hashToken,
+  signAccessToken,
+  signRefreshToken,
+  verifyRefreshToken,
+} from '../../shared/utils/token.js'
 
-/** Fields safe to return to a client. `passwordHash` is never selected. */
-const PUBLIC_USER_SELECT = {
-  id: true,
-  email: true,
-  fullName: true,
-  role: true,
-  isActive: true,
-  lastLoginAt: true,
-  createdAt: true,
-} as const
+/** Columns safe to return to a client. `password_hash` is never selected. */
+const PUBLIC_USER_COLUMNS = 'id, email, full_name, role, is_active, last_login_at, created_at'
 
-type PublicUser = Pick<User, 'id' | 'email' | 'fullName' | 'role' | 'isActive' | 'lastLoginAt' | 'createdAt'>
+interface UserRow {
+  id: string
+  email: string
+  password_hash?: string
+  full_name: string | null
+  role: UserRole
+  is_active: boolean
+  last_login_at?: string | null
+  created_at?: string | null
+}
 
 /** The user shape the frontend session object expects (`session.user.email`). */
 export interface SessionUser {
@@ -26,8 +32,8 @@ export interface SessionUser {
   full_name: string | null
   role: UserRole
   is_active: boolean
-  last_login_at: Date | null
-  created_at: Date | null
+  last_login_at: string | null
+  created_at: string | null
 }
 
 export interface Session {
@@ -57,33 +63,33 @@ export interface LoginInput {
 
 const normalizeEmail = (email: string): string => String(email).trim().toLowerCase()
 
-function toSessionUser(user: PublicUser | User): SessionUser {
+function toSessionUser(user: UserRow): SessionUser {
   return {
     id: user.id,
     email: user.email,
-    full_name: user.fullName ?? null,
+    full_name: user.full_name ?? null,
     role: user.role,
-    is_active: user.isActive,
-    last_login_at: user.lastLoginAt ?? null,
-    created_at: user.createdAt ?? null,
+    is_active: user.is_active,
+    last_login_at: user.last_login_at ?? null,
+    created_at: user.created_at ?? null,
   }
 }
 
 class AuthService {
   /** Issues an access/refresh pair and persists the refresh token's digest. */
-  async issueSession(user: User | PublicUser, context: RequestContext = {}): Promise<Session> {
+  async issueSession(user: UserRow, context: RequestContext = {}): Promise<Session> {
     const accessToken = signAccessToken({ sub: user.id, email: user.email, role: user.role })
     const refreshToken = signRefreshToken({ sub: user.id })
 
-    await prisma.refreshToken.create({
-      data: {
-        tokenHash: hashToken(refreshToken),
-        userId: user.id,
-        expiresAt: new Date(Date.now() + expiresInToMs(env.JWT_REFRESH_EXPIRES_IN)),
-        userAgent: context.userAgent ?? null,
-        ipAddress: context.ipAddress ?? null,
-      },
+    const { error } = await supabase.from('refresh_tokens').insert({
+      token_hash: hashToken(refreshToken),
+      user_id: user.id,
+      expires_at: new Date(Date.now() + expiresInToMs(env.JWT_REFRESH_EXPIRES_IN)).toISOString(),
+      user_agent: context.userAgent ?? null,
+      ip_address: context.ipAddress ?? null,
     })
+
+    if (error) throw ApiError.internal(`Could not start a session: ${error.message}`)
 
     return {
       access_token: accessToken,
@@ -94,41 +100,54 @@ class AuthService {
     }
   }
 
-  async register({ email, password, fullName, role = ROLES.EDITOR }: RegisterInput): Promise<SessionUser> {
+  async register({ email, password, fullName, role = UserRole.EDITOR }: RegisterInput): Promise<SessionUser> {
     const normalizedEmail = normalizeEmail(email)
 
-    if (await prisma.user.findUnique({ where: { email: normalizedEmail } })) {
-      throw ApiError.conflict('An account with this email already exists')
-    }
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', normalizedEmail)
+      .maybeSingle()
 
-    const user = await prisma.user.create({
-      data: {
+    if (existing) throw ApiError.conflict('An account with this email already exists')
+
+    const { data, error } = await supabase
+      .from('users')
+      .insert({
         email: normalizedEmail,
-        passwordHash: await hashPassword(password),
-        fullName: fullName ?? null,
+        password_hash: await hashPassword(password),
+        full_name: fullName ?? null,
         role,
-      },
-      select: PUBLIC_USER_SELECT,
-    })
+      })
+      .select(PUBLIC_USER_COLUMNS)
+      .single()
 
-    return toSessionUser(user)
+    if (error) throw ApiError.internal(`Could not create the account: ${error.message}`)
+
+    return toSessionUser(data as UserRow)
   }
 
   async login({ email, password }: LoginInput, context: RequestContext = {}): Promise<Session> {
-    const user = await prisma.user.findUnique({ where: { email: normalizeEmail(email) } })
+    const { data: user } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', normalizeEmail(email))
+      .maybeSingle()
+
+    const row = user as UserRow | null
 
     // Identical message for "no such user" and "wrong password" so the endpoint
     // cannot be used to enumerate accounts.
-    if (!user || !(await comparePassword(password, user.passwordHash))) {
+    if (!row || !(await comparePassword(password, row.password_hash ?? ''))) {
       throw ApiError.unauthorized('Invalid email or password')
     }
 
-    if (!user.isActive) throw ApiError.forbidden('Account has been deactivated')
+    if (!row.is_active) throw ApiError.forbidden('Account has been deactivated')
 
-    const lastLoginAt = new Date()
-    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt } })
+    const lastLoginAt = new Date().toISOString()
+    await supabase.from('users').update({ last_login_at: lastLoginAt }).eq('id', row.id)
 
-    return this.issueSession({ ...user, lastLoginAt }, context)
+    return this.issueSession({ ...row, last_login_at: lastLoginAt }, context)
   }
 
   /** Rotates the refresh token: the presented one is revoked as it is spent. */
@@ -137,96 +156,136 @@ class AuthService {
 
     const payload = verifyRefreshToken(refreshToken)
 
-    const stored = await prisma.refreshToken.findUnique({
-      where: { tokenHash: hashToken(refreshToken) },
-      include: { user: true },
-    })
+    const { data: stored } = await supabase
+      .from('refresh_tokens')
+      .select('*, user:users(*)')
+      .eq('token_hash', hashToken(refreshToken))
+      .maybeSingle()
 
-    if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+    const record = stored as
+      | { id: string; user_id: string; revoked_at: string | null; expires_at: string; user: UserRow }
+      | null
+
+    if (!record || record.revoked_at || new Date(record.expires_at) < new Date()) {
       throw ApiError.unauthorized('Refresh token is invalid or has expired')
     }
 
-    if (stored.userId !== payload.sub) throw ApiError.unauthorized('Refresh token does not match its owner')
-    if (!stored.user.isActive) throw ApiError.forbidden('Account has been deactivated')
+    if (record.user_id !== payload.sub) throw ApiError.unauthorized('Refresh token does not match its owner')
+    if (!record.user?.is_active) throw ApiError.forbidden('Account has been deactivated')
 
-    await prisma.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date() } })
+    await supabase.from('refresh_tokens').update({ revoked_at: new Date().toISOString() }).eq('id', record.id)
 
-    return this.issueSession(stored.user, context)
+    return this.issueSession(record.user, context)
   }
 
   /** Revokes one refresh token, or every token for the user when none is given. */
-  async logout({ refreshToken, userId }: { refreshToken?: string | null; userId?: string | undefined }): Promise<{ signed_out: true }> {
+  async logout({
+    refreshToken,
+    userId,
+  }: {
+    refreshToken?: string | null
+    userId?: string | undefined
+  }): Promise<{ signed_out: true }> {
+    const revokedAt = new Date().toISOString()
+
     if (refreshToken) {
-      await prisma.refreshToken.updateMany({
-        where: { tokenHash: hashToken(refreshToken), revokedAt: null },
-        data: { revokedAt: new Date() },
-      })
+      await supabase
+        .from('refresh_tokens')
+        .update({ revoked_at: revokedAt })
+        .eq('token_hash', hashToken(refreshToken))
+        .is('revoked_at', null)
     } else if (userId) {
-      await prisma.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } })
+      await supabase.from('refresh_tokens').update({ revoked_at: revokedAt }).eq('user_id', userId).is('revoked_at', null)
     }
 
     return { signed_out: true }
   }
 
   async getProfile(userId: string): Promise<SessionUser> {
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: PUBLIC_USER_SELECT })
-    if (!user) throw ApiError.notFound('User not found')
-    return toSessionUser(user)
+    const { data } = await supabase.from('users').select(PUBLIC_USER_COLUMNS).eq('id', userId).maybeSingle()
+
+    if (!data) throw ApiError.notFound('User not found')
+    return toSessionUser(data as UserRow)
   }
 
   async changePassword(
     userId: string,
     { currentPassword, newPassword }: { currentPassword: string; newPassword: string },
   ): Promise<{ password_changed: true }> {
-    const user = await prisma.user.findUnique({ where: { id: userId } })
+    const { data } = await supabase.from('users').select('*').eq('id', userId).maybeSingle()
+    const user = data as UserRow | null
+
     if (!user) throw ApiError.notFound('User not found')
 
-    if (!(await comparePassword(currentPassword, user.passwordHash))) {
+    if (!(await comparePassword(currentPassword, user.password_hash ?? ''))) {
       throw ApiError.unauthorized('Current password is incorrect')
     }
 
-    await prisma.user.update({ where: { id: userId }, data: { passwordHash: await hashPassword(newPassword) } })
+    await supabase.from('users').update({ password_hash: await hashPassword(newPassword) }).eq('id', userId)
 
     // A password change invalidates every existing session.
-    await prisma.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } })
+    await supabase
+      .from('refresh_tokens')
+      .update({ revoked_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .is('revoked_at', null)
 
     return { password_changed: true }
   }
 
   async listUsers(): Promise<SessionUser[]> {
-    const users = await prisma.user.findMany({ select: PUBLIC_USER_SELECT, orderBy: { createdAt: 'asc' } })
-    return users.map(toSessionUser)
+    const { data, error } = await supabase
+      .from('users')
+      .select(PUBLIC_USER_COLUMNS)
+      .order('created_at', { ascending: true })
+
+    if (error) throw ApiError.internal(`Could not list users: ${error.message}`)
+    return (data ?? []).map((row) => toSessionUser(row as UserRow))
   }
 
   async updateUser(
     id: string,
-    { role, isActive, fullName }: { role?: UserRole | undefined; isActive?: boolean | undefined; fullName?: string | undefined },
+    {
+      role,
+      isActive,
+      fullName,
+    }: { role?: UserRole | undefined; isActive?: boolean | undefined; fullName?: string | undefined },
   ): Promise<SessionUser> {
-    const user = await prisma.user.update({
-      where: { id },
-      data: {
+    const { data, error } = await supabase
+      .from('users')
+      .update({
         ...(role !== undefined ? { role } : {}),
-        ...(isActive !== undefined ? { isActive } : {}),
-        ...(fullName !== undefined ? { fullName } : {}),
-      },
-      select: PUBLIC_USER_SELECT,
-    })
+        ...(isActive !== undefined ? { is_active: isActive } : {}),
+        ...(fullName !== undefined ? { full_name: fullName } : {}),
+      })
+      .eq('id', id)
+      .select(PUBLIC_USER_COLUMNS)
+      .maybeSingle()
 
-    return toSessionUser(user)
+    if (error) throw ApiError.internal(`Could not update the user: ${error.message}`)
+    if (!data) throw ApiError.notFound('User not found')
+
+    return toSessionUser(data as UserRow)
   }
 
   async deleteUser(id: string): Promise<{ id: string; deleted: true }> {
-    await prisma.user.delete({ where: { id } })
+    const { data, error } = await supabase.from('users').delete().eq('id', id).select('id').maybeSingle()
+
+    if (error) throw ApiError.internal(`Could not delete the user: ${error.message}`)
+    if (!data) throw ApiError.notFound('User not found')
+
     return { id, deleted: true }
   }
 
   /** Housekeeping: clears expired/revoked tokens. Safe to run on a schedule. */
   async pruneExpiredTokens(): Promise<{ pruned: number }> {
-    const { count } = await prisma.refreshToken.deleteMany({
-      where: { OR: [{ expiresAt: { lt: new Date() } }, { revokedAt: { not: null } }] },
-    })
+    const { data } = await supabase
+      .from('refresh_tokens')
+      .delete()
+      .or(`expires_at.lt.${new Date().toISOString()},revoked_at.not.is.null`)
+      .select('id')
 
-    return { pruned: count }
+    return { pruned: (data ?? []).length }
   }
 }
 

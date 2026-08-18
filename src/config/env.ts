@@ -41,11 +41,11 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   API_PREFIX: z.string().startsWith('/').default('/api/v1'),
 
-  // --- Database (Supabase PostgreSQL) --------------------------------------
-  // DATABASE_URL is the transaction pooler (6543, needs ?pgbouncer=true).
-  // DIRECT_URL is the session pooler (5432), used only for migrations.
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  DIRECT_URL: z.string().optional(),
+  // --- Supabase (database via PostgREST) ------------------------------------
+  // All data access uses the secret (service-role) key over HTTPS. There is no
+  // Postgres connection string and no ORM connection pool.
+  SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL'),
+  SUPABASE_SECRET_KEY: z.string().min(20, 'SUPABASE_SECRET_KEY is required'),
 
   JWT_ACCESS_SECRET: z.string().min(16, 'JWT_ACCESS_SECRET must be at least 16 characters'),
   JWT_REFRESH_SECRET: z.string().min(16, 'JWT_REFRESH_SECRET must be at least 16 characters'),
@@ -99,13 +99,13 @@ function assertNoPlaceholders(name: string, value: string | undefined): void {
   console.error(
     `\nInvalid environment configuration:\n` +
       `  - ${name} still contains the placeholder "${placeholder[0]}".\n` +
-      `    Fill it in from the Supabase dashboard → Connect.\n`,
+      `    Fill it in from the Supabase dashboard → Project Settings → API.\n`,
   )
   process.exit(1)
 }
 
-assertNoPlaceholders('DATABASE_URL', process.env['DATABASE_URL'])
-assertNoPlaceholders('DIRECT_URL', process.env['DIRECT_URL'])
+assertNoPlaceholders('SUPABASE_URL', process.env['SUPABASE_URL'])
+assertNoPlaceholders('SUPABASE_SECRET_KEY', process.env['SUPABASE_SECRET_KEY'])
 
 const parsed = envSchema.safeParse(process.env)
 

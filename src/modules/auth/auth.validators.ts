@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UserRole } from '@prisma/client'
+import { UserRole } from '../../config/constants.js'
 
 const emailSchema = z
   .string({ required_error: 'Email is required' })

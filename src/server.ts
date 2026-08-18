@@ -1,6 +1,6 @@
 import type { Server } from 'node:http'
 import env from './config/env.js'
-import { connectDatabase, disconnectDatabase } from './config/prisma.js'
+import { connectDatabase, disconnectDatabase } from './config/supabase.js'
 import { reportCloudinaryStatus } from './config/cloudinary.js'
 import logger from './shared/utils/logger.js'
 import createApp from './app.js'

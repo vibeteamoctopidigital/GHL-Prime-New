@@ -5,7 +5,7 @@ import env from '../../config/env.js'
 import { LEAD_STATUSES, type LeadStatus } from '../../config/constants.js'
 import type { PaginatedResult, SerializedRow } from '../../types/common.js'
 
-export interface LeadServiceOptions<TRow> extends BaseServiceOptions<TRow> {
+export interface LeadServiceOptions extends BaseServiceOptions {
   /** CRM webhook this lead type is forwarded to. Empty disables forwarding. */
   webhookUrl?: string
 }
@@ -33,11 +33,11 @@ export interface LeadListOptions {
  * Shared behaviour for public lead-capture forms: spam filtering, persistence,
  * CRM webhook forwarding, and an admin inbox.
  */
-export class LeadService<TRow extends { id: string }> extends BaseService<TRow> {
+export class LeadService extends BaseService {
   protected readonly webhookUrl: string
 
-  constructor({ webhookUrl = '', ...options }: LeadServiceOptions<TRow>) {
-    super({ defaultOrderBy: { submittedAt: 'desc' }, ...options })
+  constructor({ webhookUrl = '', ...options }: LeadServiceOptions) {
+    super({ defaultOrderBy: [{ column: 'submitted_at', ascending: false }], ...options })
     this.webhookUrl = webhookUrl
   }
 

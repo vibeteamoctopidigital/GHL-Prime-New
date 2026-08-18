@@ -1,33 +1,46 @@
+import type { PostgrestFilterBuilder } from '@supabase/postgrest-js'
+import supabase from '../../config/supabase.js'
 import ApiError from '../utils/ApiError.js'
-import { pickDefined } from '../utils/object.js'
+import { toSnakeCase } from '../serializers/caseTransform.js'
 import { buildPaginationMeta } from '../utils/pagination.js'
-import type { DeletionResult, PaginatedResult, PrismaDelegate, SerializedRow } from '../../types/common.js'
+import type { DeletionResult, PaginatedResult, SerializedRow } from '../../types/common.js'
 
-export type WhereInput = Record<string, unknown>
-export type OrderByInput = Record<string, unknown> | readonly Record<string, unknown>[]
-export type IncludeInput = Record<string, unknown>
+/**
+ * Filter shape used across the services.
+ *
+ * Keys are snake_case columns compared with equality; `NOT` nests columns to
+ * exclude. That covers every query this API makes — anything more exotic
+ * belongs in a Postgres function rather than hidden inside a generic layer.
+ */
+export interface Where {
+  [column: string]: unknown
+  NOT?: Record<string, unknown>
+}
 
-export interface BaseServiceOptions<TRow> {
-  /** The Prisma delegate this service wraps, e.g. `prisma.blogPost`. */
-  model: PrismaDelegate<TRow>
-  /** Human label used in error messages. */
+export interface OrderBy {
+  column: string
+  ascending: boolean
+}
+
+export interface BaseServiceOptions {
+  /** Table name, e.g. 'blog_posts'. */
+  table: string
   resourceName?: string
-  defaultOrderBy?: OrderByInput
-  defaultInclude?: IncludeInput | undefined
-  /** Row -> API shape mapper. */
-  serialize?: (row: TRow) => SerializedRow
-  /** Fields matched by the `search` option. */
+  defaultOrderBy?: OrderBy[]
+  /** PostgREST select string — this is how embeds are expressed. */
+  select?: string
+  /** Row -> API shape mapper. Rows already arrive snake_case. */
+  serialize?: (row: SerializedRow) => SerializedRow
+  /** Columns matched by `search` (ILIKE). */
   searchableFields?: readonly string[]
 }
 
 export interface ListOptions {
-  where?: WhereInput
-  orderBy?: OrderByInput
-  include?: IncludeInput
-  select?: Record<string, unknown>
+  where?: Where
+  orderBy?: OrderBy[]
+  select?: string
   search?: string | undefined
-  skip?: number
-  take?: number
+  limit?: number
 }
 
 export interface PaginatedListOptions extends ListOptions {
@@ -35,178 +48,211 @@ export interface PaginatedListOptions extends ListOptions {
   limit: number
 }
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type Query = PostgrestFilterBuilder<any, any, any, any, any>
+
 /**
- * Generic data-access layer over a Prisma model.
+ * Generic data-access layer over a Supabase (PostgREST) table.
  *
- * Every resource in this API gets `list / findById / create / update / remove /
- * count / exists` for free by extending this class; modules only write the
- * behaviour that is genuinely specific to them (slug handling, relation
- * syncing, publish rules).
+ * Rows arrive already snake_case — the same casing the API emits — so unlike
+ * the ORM layer this replaced there is no output transform. Input is converted
+ * on the way in instead, which is why callers may still pass camelCase.
  */
-export class BaseService<TRow extends { id: string }> {
-  protected readonly model: PrismaDelegate<TRow>
+export class BaseService {
+  public readonly table: string
   public readonly resourceName: string
-  protected readonly defaultOrderBy: OrderByInput
-  protected readonly defaultInclude: IncludeInput | undefined
-  protected readonly serialize: (row: TRow) => SerializedRow
+  protected readonly defaultOrderBy: OrderBy[]
+  protected readonly selectClause: string
+  protected readonly serialize: (row: SerializedRow) => SerializedRow
   protected readonly searchableFields: readonly string[]
 
-  constructor(options: BaseServiceOptions<TRow>) {
-    this.model = options.model
+  constructor(options: BaseServiceOptions) {
+    this.table = options.table
     this.resourceName = options.resourceName ?? 'Resource'
-    this.defaultOrderBy = options.defaultOrderBy ?? { createdAt: 'desc' }
-    this.defaultInclude = options.defaultInclude
-    this.serialize = options.serialize ?? ((row) => row as unknown as SerializedRow)
+    this.defaultOrderBy = options.defaultOrderBy ?? [{ column: 'created_at', ascending: false }]
+    this.selectClause = options.select ?? '*'
+    this.serialize = options.serialize ?? ((row) => row)
     this.searchableFields = options.searchableFields ?? []
   }
 
-  /** Maps a list of rows through the configured serializer. */
-  protected presentMany(rows: TRow[]): SerializedRow[] {
-    return rows.map((row) => this.serialize(row))
-  }
-
-  /** Maps one row (or null) through the configured serializer. */
-  protected presentOne(row: TRow | null): SerializedRow | null {
-    return row === null ? null : this.serialize(row)
-  }
-
-  /** Case-insensitive OR-match across `searchableFields`. */
-  protected buildSearchFilter(search?: string): WhereInput | null {
-    if (!search || this.searchableFields.length === 0) return null
-
-    return {
-      OR: this.searchableFields.map((field) => ({ [field]: { contains: search, mode: 'insensitive' } })),
+  /** Turns a PostgREST error into the API's error envelope. */
+  protected fail(message: string, error: { message: string; code?: string }): never {
+    if (error.code === 'PGRST205') {
+      throw ApiError.internal(`Table "${this.table}" does not exist in Supabase.`)
     }
+    if (error.code === '23505') throw ApiError.conflict(`${this.resourceName} already exists`)
+    if (error.code === '23503') throw ApiError.badRequest('Related record does not exist')
+    if (error.code === '23502') throw ApiError.badRequest(`A required field is missing: ${error.message}`)
+
+    throw ApiError.internal(`${message}: ${error.message}`)
   }
 
-  /** Merges the caller's `where` with the search filter. */
-  protected resolveWhere(where: WhereInput = {}, search?: string): WhereInput {
-    const searchFilter = this.buildSearchFilter(search)
-    return searchFilter ? { AND: [where, searchFilter] } : where
+  protected applyFilters(query: Query, where: Where = {}): Query {
+    let next = query
+
+    for (const [column, value] of Object.entries(where)) {
+      if (column === 'NOT') continue
+      next = value === null ? next.is(column, null) : next.eq(column, value as never)
+    }
+
+    for (const [column, value] of Object.entries(where.NOT ?? {})) {
+      next = next.neq(column, value as never)
+    }
+
+    return next
   }
 
-  /** Builds the include/select portion of a query — the two are exclusive in Prisma. */
-  protected resolveProjection(include?: IncludeInput, select?: Record<string, unknown>): Record<string, unknown> {
-    if (select) return { select }
-    const resolved = include ?? this.defaultInclude
-    return resolved ? { include: resolved } : {}
+  /** Case-insensitive OR match across `searchableFields`. */
+  protected applySearch(query: Query, search?: string): Query {
+    if (!search || this.searchableFields.length === 0) return query
+
+    // Commas and parentheses would break PostgREST's or() grammar.
+    const safe = search.replace(/[,()]/g, ' ').trim()
+    if (!safe) return query
+
+    return query.or(this.searchableFields.map((field) => `${field}.ilike.%${safe}%`).join(','))
+  }
+
+  protected applyOrder(query: Query, orderBy?: OrderBy[]): Query {
+    let next = query
+    for (const { column, ascending } of orderBy ?? this.defaultOrderBy) {
+      next = next.order(column, { ascending })
+    }
+    return next
   }
 
   async list(options: ListOptions = {}): Promise<SerializedRow[]> {
-    const { where = {}, orderBy, include, select, search, skip, take } = options
+    let query = supabase.from(this.table).select(options.select ?? this.selectClause) as unknown as Query
 
-    const rows = await this.model.findMany({
-      where: this.resolveWhere(where, search),
-      orderBy: orderBy ?? this.defaultOrderBy,
-      ...this.resolveProjection(include, select),
-      ...(typeof skip === 'number' ? { skip } : {}),
-      ...(typeof take === 'number' ? { take } : {}),
-    })
+    query = this.applyFilters(query, options.where)
+    query = this.applySearch(query, options.search)
+    query = this.applyOrder(query, options.orderBy)
+    if (typeof options.limit === 'number') query = query.limit(options.limit)
 
-    return this.presentMany(rows)
+    const { data, error } = await query
+    if (error) this.fail(`Could not list ${this.resourceName}`, error)
+
+    return (data ?? []).map((row: SerializedRow) => this.serialize(row))
   }
 
-  /** Same as `list`, but also returns pagination metadata. */
   async listPaginated(options: PaginatedListOptions): Promise<PaginatedResult<SerializedRow>> {
-    const { where = {}, orderBy, include, select, search, page, limit } = options
-    const finalWhere = this.resolveWhere(where, search)
+    const { page, limit } = options
+    const from = (page - 1) * limit
 
-    const [rows, total] = await Promise.all([
-      this.model.findMany({
-        where: finalWhere,
-        orderBy: orderBy ?? this.defaultOrderBy,
-        ...this.resolveProjection(include, select),
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.model.count({ where: finalWhere }),
-    ])
+    let query = supabase
+      .from(this.table)
+      .select(options.select ?? this.selectClause, { count: 'exact' }) as unknown as Query
 
-    return { data: this.presentMany(rows), meta: buildPaginationMeta({ page, limit, total }) }
+    query = this.applyFilters(query, options.where)
+    query = this.applySearch(query, options.search)
+    query = this.applyOrder(query, options.orderBy)
+
+    const { data, error, count } = await query.range(from, from + limit - 1)
+    if (error) this.fail(`Could not list ${this.resourceName}`, error)
+
+    return {
+      data: (data ?? []).map((row: SerializedRow) => this.serialize(row)),
+      meta: buildPaginationMeta({ page, limit, total: count ?? 0 }),
+    }
   }
 
-  async findById(
-    id: string,
-    options: { include?: IncludeInput; select?: Record<string, unknown> } = {},
-  ): Promise<SerializedRow | null> {
-    const row = await this.model.findUnique({
-      where: { id },
-      ...this.resolveProjection(options.include, options.select),
-    })
+  async findById(id: string, options: { select?: string } = {}): Promise<SerializedRow | null> {
+    const { data, error } = await supabase
+      .from(this.table)
+      .select(options.select ?? this.selectClause)
+      .eq('id', id)
+      .maybeSingle()
 
-    return this.presentOne(row)
+    if (error) this.fail(`Could not load ${this.resourceName}`, error)
+    return data ? this.serialize(data as unknown as SerializedRow) : null
   }
 
-  /** Same as `findById` but throws a 404 instead of returning null. */
-  async findByIdOrFail(id: string, options?: { include?: IncludeInput }): Promise<SerializedRow> {
+  async findByIdOrFail(id: string, options?: { select?: string }): Promise<SerializedRow> {
     const record = await this.findById(id, options)
     if (!record) throw ApiError.notFound(`${this.resourceName} not found`)
     return record
   }
 
-  async findOne(
-    where: WhereInput,
-    options: { include?: IncludeInput; orderBy?: OrderByInput } = {},
-  ): Promise<SerializedRow | null> {
-    const row = await this.model.findFirst({
-      where,
-      orderBy: options.orderBy ?? this.defaultOrderBy,
-      ...this.resolveProjection(options.include),
-    })
+  async findOne(where: Where, options: { select?: string; orderBy?: OrderBy[] } = {}): Promise<SerializedRow | null> {
+    let query = supabase.from(this.table).select(options.select ?? this.selectClause) as unknown as Query
 
-    return this.presentOne(row)
+    query = this.applyFilters(query, where)
+    query = this.applyOrder(query, options.orderBy)
+
+    const { data, error } = await query.limit(1)
+    if (error) this.fail(`Could not load ${this.resourceName}`, error)
+
+    const row = (data ?? [])[0] as SerializedRow | undefined
+    return row ? this.serialize(row) : null
   }
 
-  async findOneOrFail(where: WhereInput, options?: { include?: IncludeInput }): Promise<SerializedRow> {
+  async findOneOrFail(where: Where, options?: { select?: string }): Promise<SerializedRow> {
     const record = await this.findOne(where, options)
     if (!record) throw ApiError.notFound(`${this.resourceName} not found`)
     return record
   }
 
-  async create(data: Record<string, unknown>, options: { include?: IncludeInput } = {}): Promise<SerializedRow> {
-    const created = await this.model.create({
-      data: pickDefined(data),
-      ...this.resolveProjection(options.include),
-    })
-
-    return this.serialize(created)
+  /** Accepts camelCase or snake_case input; always writes snake_case. */
+  protected toColumns(data: Record<string, unknown>): Record<string, unknown> {
+    const row = toSnakeCase<Record<string, unknown>>(data)
+    return Object.fromEntries(Object.entries(row).filter(([, value]) => value !== undefined))
   }
 
-  async update(
-    id: string,
-    data: Record<string, unknown>,
-    options: { include?: IncludeInput } = {},
-  ): Promise<SerializedRow> {
-    await this.ensureExists(id)
+  async create(data: Record<string, unknown>, options: { select?: string } = {}): Promise<SerializedRow> {
+    const { data: created, error } = await supabase
+      .from(this.table)
+      .insert(this.toColumns(data))
+      .select(options.select ?? this.selectClause)
+      .single()
 
-    const updated = await this.model.update({
-      where: { id },
-      data: pickDefined(data),
-      ...this.resolveProjection(options.include),
-    })
+    if (error) this.fail(`Could not create ${this.resourceName}`, error)
+    return this.serialize(created as unknown as SerializedRow)
+  }
 
-    return this.serialize(updated)
+  async update(id: string, data: Record<string, unknown>, options: { select?: string } = {}): Promise<SerializedRow> {
+    const columns = this.toColumns(data)
+
+    // An empty PATCH would otherwise update zero rows and look like a 404.
+    if (Object.keys(columns).length === 0) return this.findByIdOrFail(id, options)
+
+    const { data: updated, error } = await supabase
+      .from(this.table)
+      .update(columns)
+      .eq('id', id)
+      .select(options.select ?? this.selectClause)
+      .maybeSingle()
+
+    if (error) this.fail(`Could not update ${this.resourceName}`, error)
+    if (!updated) throw ApiError.notFound(`${this.resourceName} not found`)
+
+    return this.serialize(updated as unknown as SerializedRow)
   }
 
   async remove(id: string): Promise<DeletionResult> {
-    await this.ensureExists(id)
-    await this.model.delete({ where: { id } })
+    const { data, error } = await supabase.from(this.table).delete().eq('id', id).select('id').maybeSingle()
+
+    if (error) this.fail(`Could not delete ${this.resourceName}`, error)
+    if (!data) throw ApiError.notFound(`${this.resourceName} not found`)
+
     return { id, deleted: true }
   }
 
-  async count(where: WhereInput = {}): Promise<number> {
-    return this.model.count({ where })
+  async count(where: Where = {}): Promise<number> {
+    let query = supabase.from(this.table).select('id', { count: 'exact', head: true }) as unknown as Query
+    query = this.applyFilters(query, where)
+
+    const { count, error } = await query
+    if (error) this.fail(`Could not count ${this.resourceName}`, error)
+
+    return count ?? 0
   }
 
-  async exists(where: WhereInput): Promise<boolean> {
-    return (await this.model.count({ where, take: 1 })) > 0
+  async exists(where: Where): Promise<boolean> {
+    return (await this.count(where)) > 0
   }
 
-  /** Throws 404 unless a row with this id exists. */
   async ensureExists(id: string): Promise<void> {
-    if (!(await this.exists({ id }))) {
-      throw ApiError.notFound(`${this.resourceName} not found`)
-    }
+    if (!(await this.exists({ id }))) throw ApiError.notFound(`${this.resourceName} not found`)
   }
 }
 

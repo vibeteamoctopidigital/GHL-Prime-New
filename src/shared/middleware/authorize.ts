@@ -1,5 +1,5 @@
 import type { RequestHandler } from 'express'
-import type { UserRole } from '@prisma/client'
+import type { UserRole } from '../../config/constants.js'
 import ApiError from '../utils/ApiError.js'
 import { CONTENT_MANAGER_ROLES, ROLES } from '../../config/constants.js'
 

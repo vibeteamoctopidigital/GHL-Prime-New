@@ -1,10 +1,8 @@
-import type { MediaAsset } from '@prisma/client'
 import type { UploadApiOptions, UploadApiResponse } from 'cloudinary'
-import prisma from '../../config/prisma.js'
+import supabase from '../../config/supabase.js'
 import env from '../../config/env.js'
 import { getCloudinary } from '../../config/cloudinary.js'
 import BaseService from '../../shared/services/BaseService.js'
-import { defaultSerializer } from '../../shared/serializers/caseTransform.js'
 import ApiError from '../../shared/utils/ApiError.js'
 import logger from '../../shared/utils/logger.js'
 import type { PaginatedResult, SerializedRow } from '../../types/common.js'
@@ -60,14 +58,13 @@ function describeCloudinaryError(error: unknown): ApiError {
   })
 }
 
-class UploadService extends BaseService<MediaAsset> {
+class UploadService extends BaseService {
   constructor() {
     super({
-      model: prisma.mediaAsset,
+      table: 'media_assets',
       resourceName: 'Media asset',
-      defaultOrderBy: { createdAt: 'desc' },
-      searchableFields: ['originalFilename', 'alt', 'publicId'],
-      serialize: defaultSerializer,
+      defaultOrderBy: [{ column: 'created_at', ascending: false }],
+      searchableFields: ['original_filename', 'alt', 'public_id'],
     })
   }
 
@@ -132,17 +129,19 @@ class UploadService extends BaseService<MediaAsset> {
       uploadedById: options.uploadedById ?? null,
     }
 
-    // Upsert, not create: Cloudinary returns the existing public_id when an
+    // Upsert, not insert: Cloudinary returns the existing public_id when an
     // asset is overwritten, and that must refresh the row rather than collide
     // on the unique index.
-    const asset = await prisma.mediaAsset.upsert({
-      where: { publicId: result.public_id },
-      update: record,
-      create: { publicId: result.public_id, ...record },
-    })
+    const { data: asset, error } = await supabase
+      .from('media_assets')
+      .upsert(this.toColumns({ publicId: result.public_id, ...record }), { onConflict: 'public_id' })
+      .select('*')
+      .single()
+
+    if (error) this.fail('Could not record the uploaded image', error)
 
     logger.info(`Uploaded image ${result.public_id} (${result.bytes} bytes)`)
-    return this.serialize(asset)
+    return this.serialize(asset as SerializedRow)
   }
 
   /** Uploads several images. One failure does not discard the successes. */
@@ -192,7 +191,8 @@ class UploadService extends BaseService<MediaAsset> {
       throw ApiError.badGateway(`Cloudinary delete failed: ${result.result ?? 'unknown error'}`)
     }
 
-    await prisma.mediaAsset.deleteMany({ where: { publicId } })
+    const { error: deleteError } = await supabase.from('media_assets').delete().eq('public_id', publicId)
+    if (deleteError) this.fail('Could not remove the media record', deleteError)
 
     logger.info(`Deleted image ${publicId}`)
     return { public_id: publicId, deleted: true }
@@ -200,10 +200,8 @@ class UploadService extends BaseService<MediaAsset> {
 
   /** Deletes by our own record id, resolving the public_id first. */
   async destroyById(id: string): Promise<{ public_id: string; deleted: true }> {
-    const asset = await prisma.mediaAsset.findUnique({ where: { id } })
-    if (!asset) throw ApiError.notFound('Media asset not found')
-
-    return this.destroyByPublicId(asset.publicId)
+    const asset = await this.findByIdOrFail(id)
+    return this.destroyByPublicId(asset['public_id'] as string)
   }
 
   /** The media library listing for the admin panel. */

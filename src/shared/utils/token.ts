@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import jwt, { type JwtPayload, type SignOptions } from 'jsonwebtoken'
 import type { Request } from 'express'
-import type { UserRole } from '@prisma/client'
+import type { UserRole } from '../../config/constants.js'
 import env from '../../config/env.js'
 import ApiError from './ApiError.js'
 

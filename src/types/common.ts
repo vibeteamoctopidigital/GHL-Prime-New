@@ -1,4 +1,4 @@
-import type { UserRole } from '@prisma/client'
+import type { UserRole } from '../config/constants.js'
 
 /** The trimmed user record attached to `req.user` by the auth middleware. */
 export interface AuthenticatedUser {
@@ -65,25 +65,6 @@ export interface ValidationIssue {
 export interface ReorderItem {
   id: string
   sortOrder: number
-}
-
-/**
- * The subset of a Prisma model delegate that BaseService uses.
- *
- * Prisma's generated delegates have far more precise argument types, but they
- * are not expressible generically without heavy conditional types. Method
- * parameters are bivariant in TypeScript, so every concrete delegate is
- * assignable to this interface while call sites keep their real row types.
- */
-export interface PrismaDelegate<TRow> {
-  findMany(args?: any): Promise<TRow[]>
-  findUnique(args: any): Promise<TRow | null>
-  findFirst(args: any): Promise<TRow | null>
-  create(args: any): Promise<TRow>
-  update(args: any): Promise<TRow>
-  delete(args: any): Promise<TRow>
-  deleteMany(args?: any): Promise<{ count: number }>
-  count(args?: any): Promise<number>
 }
 
 /** Result of a delete, returned to the client. */

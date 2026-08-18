@@ -1,8 +1,5 @@
-import type { ContactLead } from '@prisma/client'
-import prisma from '../../config/prisma.js'
 import env from '../../config/env.js'
 import LeadService from '../../shared/services/LeadService.js'
-import { defaultSerializer } from '../../shared/serializers/caseTransform.js'
 import logger from '../../shared/utils/logger.js'
 import type { SerializedRow } from '../../types/common.js'
 import type { ContactSubmitBody } from './contact.validators.js'
@@ -12,14 +9,13 @@ export interface SpamOutcome {
   spam: true
 }
 
-class ContactService extends LeadService<ContactLead> {
+class ContactService extends LeadService {
   constructor() {
     super({
-      model: prisma.contactLead,
+      table: 'contact_leads',
       resourceName: 'Contact lead',
       webhookUrl: env.CONTACT_WEBHOOK_URL,
-      searchableFields: ['fullName', 'email', 'company', 'message'],
-      serialize: defaultSerializer,
+      searchableFields: ['full_name', 'email', 'company', 'message'],
     })
   }
 
@@ -53,7 +49,7 @@ class ContactService extends LeadService<ContactLead> {
       timeline: input.timeline || null,
       biggestChallenge: input.biggestChallenge || null,
       pageUrl: input.pageUrl || null,
-      submittedAt,
+      submittedAt: submittedAt.toISOString(),
     }
 
     // The webhook keeps the exact field names the CRM automation expects.

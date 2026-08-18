@@ -1,7 +1,5 @@
-import type { BlogPost } from '@prisma/client'
-import prisma from '../../config/prisma.js'
+import supabase from '../../config/supabase.js'
 import BaseService from '../../shared/services/BaseService.js'
-import { defaultSerializer } from '../../shared/serializers/caseTransform.js'
 import { buildUniqueSlug } from '../../shared/utils/slug.js'
 import ApiError from '../../shared/utils/ApiError.js'
 import { getPagination } from '../../shared/utils/pagination.js'
@@ -15,14 +13,16 @@ export interface BlogListOptions {
   limit?: number | undefined
 }
 
-class BlogService extends BaseService<BlogPost> {
+class BlogService extends BaseService {
   constructor() {
     super({
-      model: prisma.blogPost,
+      table: 'blog_posts',
       resourceName: 'Blog post',
-      defaultOrderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }],
+      defaultOrderBy: [
+        { column: 'published_at', ascending: false },
+        { column: 'created_at', ascending: false },
+      ],
       searchableFields: ['title', 'excerpt', 'category', 'content'],
-      serialize: defaultSerializer,
     })
   }
 
@@ -47,7 +47,7 @@ class BlogService extends BaseService<BlogPost> {
 
   /** Every post including drafts, newest-created first — /admin/blog. */
   listAll({ search }: { search?: string | undefined } = {}): Promise<SerializedRow[]> {
-    return this.list({ search, orderBy: { createdAt: 'desc' } })
+    return this.list({ search, orderBy: [{ column: 'created_at', ascending: false }] })
   }
 
   async findBySlug(slug: string, { includeUnpublished = false } = {}): Promise<SerializedRow> {
@@ -62,14 +62,17 @@ class BlogService extends BaseService<BlogPost> {
 
     return this.list({
       where: { published: true, category, ...(excludeSlug ? { NOT: { slug: excludeSlug } } : {}) },
-      take: limit,
+      limit,
     })
   }
 
   /** Publishing a post for the first time stamps published_at. */
-  private applyPublishedAt(data: Record<string, unknown>, existing: SerializedRow | null = null): Record<string, unknown> {
+  private applyPublishedAt(
+    data: Record<string, unknown>,
+    existing: SerializedRow | null = null,
+  ): Record<string, unknown> {
     if (data['published'] === true && !data['publishedAt'] && !existing?.['published_at']) {
-      return { ...data, publishedAt: new Date() }
+      return { ...data, publishedAt: new Date().toISOString() }
     }
     return data
   }
@@ -95,14 +98,30 @@ class BlogService extends BaseService<BlogPost> {
 
   /** Distinct categories with a post count — powers the blog filter bar. */
   async listCategories(): Promise<{ category: string; count: number }[]> {
-    const grouped = await prisma.blogPost.groupBy({
-      by: ['category'],
-      where: { published: true },
-      _count: { category: true },
-      orderBy: { category: 'asc' },
-    })
+    const { data, error } = await supabase.from('blog_posts').select('category').eq('published', true)
+    if (error) throw ApiError.internal(`Could not load categories: ${error.message}`)
 
-    return grouped.map((row) => ({ category: row.category, count: row._count.category }))
+    const counts = new Map<string, number>()
+    for (const row of data ?? []) {
+      const category = (row as { category: string }).category
+      if (category) counts.set(category, (counts.get(category) ?? 0) + 1)
+    }
+
+    return [...counts.entries()]
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => a.category.localeCompare(b.category))
+  }
+
+  /** Slug + updated_at for every published post — used to build the sitemap. */
+  async listPublishedSlugs(): Promise<{ slug: string; updated_at: string }[]> {
+    const { data, error } = await supabase
+      .from('blog_posts')
+      .select('slug, updated_at')
+      .eq('published', true)
+      .order('published_at', { ascending: false })
+
+    if (error) throw ApiError.internal(`Could not load blog slugs: ${error.message}`)
+    return (data ?? []) as { slug: string; updated_at: string }[]
   }
 }
 
