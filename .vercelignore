@@ -1,7 +1,7 @@
 # Files not uploaded to the Vercel build.
 #
 # NOTE: this runs BEFORE the build, so anything the build needs must stay —
-# src/, prisma/, api/, package.json and the tsconfigs are all required.
+# src/, api/, package.json and the tsconfigs are all required.
 
 # Secrets: Vercel environment variables supply these.
 .env

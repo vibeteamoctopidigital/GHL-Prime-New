@@ -73,8 +73,8 @@ backend/
 ├── tsconfig.json              # strict, incl. noUncheckedIndexedAccess
 ├── vercel.json                # serverless config
 ├── api/index.js               # Vercel entry (exports the Express app)
-├── prisma/seed.ts             # creates the admin account
 ├── scripts/
+│   ├── seed.ts                # creates the admin account
 │   ├── list-routes.ts         # dumps the live route table
 │   ├── test-api.mjs           # exercises all 144 endpoints
 │   └── refresh-sitemap.ts     # build-time sitemap generation
