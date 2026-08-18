@@ -8,6 +8,7 @@ import asyncHandler from '../../shared/utils/asyncHandler.js'
 import ApiError from '../../shared/utils/ApiError.js'
 import { sendCreated, sendOk } from '../../shared/utils/ApiResponse.js'
 import { idParamSchema, paginationQuerySchema } from '../../shared/validators/common.validators.js'
+import createModuleIndex from '../../shared/factories/createModuleIndex.js'
 import uploadService from './upload.service.js'
 
 const router = Router()
@@ -37,6 +38,20 @@ const signatureQuerySchema = z.object({ folder: z.string().trim().max(160).optio
 router.get('/status', (_req, res) => {
   sendOk(res, { ...uploadService.status(), allowed_types: ALLOWED_IMAGE_TYPES }, 'Upload configuration retrieved')
 })
+
+/** GET /uploads — lists what lives under this prefix. Public, like /status. */
+router.get(
+  '/',
+  createModuleIndex('/uploads', [
+    { method: 'GET', path: '/status', description: 'Is uploading configured, and the limits' },
+    { method: 'POST', path: '/image', description: 'Upload one image, field "file" (auth)' },
+    { method: 'POST', path: '/images', description: 'Upload several, field "files" (auth)' },
+    { method: 'GET', path: '/library', description: 'Media library, paginated (auth)' },
+    { method: 'GET', path: '/signature', description: 'Signature for browser-direct upload (auth)' },
+    { method: 'DELETE', path: '/:id', description: 'Delete by media-asset id (auth)' },
+    { method: 'DELETE', path: '/public-id/<folder>/<name>', description: 'Delete by Cloudinary public_id (auth)' },
+  ]),
+)
 
 // Everything below requires a content-manager session.
 router.use(authenticate, authorizeContentManager)
@@ -90,9 +105,9 @@ router.get(
   }),
 )
 
-/** GET /uploads — the media library. */
+/** GET /uploads/library — the media library. */
 router.get(
-  '/',
+  '/library',
   validate({ query: paginationQuerySchema }),
   asyncHandler(async (req, res) => {
     const { page, limit, search } = req.query as unknown as { page: number; limit: number; search?: string }

@@ -76,7 +76,7 @@ backend/
 ├── scripts/
 │   ├── seed.ts                # creates the admin account
 │   ├── list-routes.ts         # dumps the live route table
-│   ├── test-api.mjs           # exercises all 147 endpoints
+│   ├── test-api.mjs           # exercises all 151 endpoints
 │   └── refresh-sitemap.ts     # build-time sitemap generation
 └── src/
     ├── server.ts              # bootstrap, listen, graceful shutdown
@@ -192,7 +192,7 @@ requires a token — the replacement for the old
 
 ## API reference
 
-**Full reference: [`docs/API.md`](docs/API.md)** — all 147 endpoints with their full
+**Full reference: [`docs/API.md`](docs/API.md)** — all 151 endpoints with their full
 URLs, request and response fields, error codes, and the data model.
 
 Deploying: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) (Vercel) ·
@@ -267,7 +267,7 @@ keys the `create` action.
 | `npm run db:seed` | Create the admin account (safe to re-run) |
 | `npm run sitemap:refresh` | Rebuild `public/sitemap.xml` |
 | `npm run routes` | Print every registered route, straight from the Express router |
-| `npm run test:api` | Exercise all 147 endpoints against a running server and report coverage |
+| `npm run test:api` | Exercise all 151 endpoints against a running server and report coverage |
 
 `test:api` derives its checklist from the router itself, so an endpoint added without a
 test is reported as uncovered rather than silently skipped.

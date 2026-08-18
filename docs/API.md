@@ -7,7 +7,7 @@ Every endpoint, with its full URL.
 | **Local base URL** | `http://localhost:4000` |
 | **Production base URL** | `https://<your-project>.vercel.app` |
 | **API prefix** | `/api` |
-| **Total endpoints** | 147 |
+| **Total endpoints** | 151 |
 | **Content type** | `application/json` (uploads use `multipart/form-data`) |
 | **Database** | Supabase PostgreSQL, accessed over PostgREST |
 | **Image storage** | Cloudinary |
@@ -119,7 +119,22 @@ curl http://localhost:4000/api          # every module
 curl http://localhost:4000/api/auth     # every auth endpoint
 ```
 
-So a prefix never answers with a bare "Route not found".
+No prefix answers with a bare "Route not found".
+
+### Wrong verb, not missing route
+
+Express answers 404 when a path exists but not for the method used, so opening a
+POST-only endpoint in a browser looked like the route was missing. Those return
+**405** with the verbs that do work:
+
+```jsonc
+// GET http://localhost:4000/api/auth/login
+{ "success": false,
+  "message": "GET is not allowed on /api/auth/login. Use POST.",
+  "errors": { "allowed_methods": ["POST"] } }
+```
+
+A path that genuinely does not exist still returns 404.
 
 ---
 
@@ -131,6 +146,7 @@ So a prefix never answers with a bare "Route not found".
 | `401` | Unauthorized | Missing/expired/invalid token, wrong credentials |
 | `403` | Forbidden | Role insufficient; disallowed CORS origin |
 | `404` | Not Found | No such record or route |
+| `405` | Method Not Allowed | Path exists but not for that verb — the body lists which do |
 | `409` | Conflict | Duplicate email or slug |
 | `410` | Gone | Retired URL (`/free-scripts`) |
 | `422` | Unprocessable | Validation failed — see `errors[]` |
@@ -550,6 +566,7 @@ a stat bar, placed per page.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
+| 0 | `GET` | `http://localhost:4000/api/showcase` | 🌐 — lists these endpoints |
 | 1 | `GET` | `http://localhost:4000/api/showcase/page/:pageKey` | 🌐 |
 | 2 | `GET` | `http://localhost:4000/api/showcase/items` | 🌐 |
 | 3 | `GET` | `http://localhost:4000/api/showcase/items/admin` | 🔒 |
@@ -599,6 +616,7 @@ alone; sending `[]` clears them. Deleting an item cascades to its placements.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
+| 0 | `GET` | `http://localhost:4000/api/contact` | 🌐 — lists these endpoints |
 | 1 | `POST` | `http://localhost:4000/api/contact/submit` | 🌐 20/hr |
 | 2 | `GET` | `http://localhost:4000/api/contact/leads` | 🔒 |
 | 3 | `GET` | `http://localhost:4000/api/contact/leads/stats` | 🔒 |
@@ -657,6 +675,7 @@ Submissions from the multi-step forms on every `/services/*` page.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
+| 0 | `GET` | `http://localhost:4000/api/service-surveys` | 🌐 — lists these endpoints |
 | 1 | `POST` | `http://localhost:4000/api/service-surveys/submit` | 🌐 20/hr |
 | 2 | `GET` | `http://localhost:4000/api/service-surveys/submissions` | 🔒 |
 | 3 | `GET` | `http://localhost:4000/api/service-surveys/submissions/stats` | 🔒 |
@@ -691,10 +710,11 @@ streamed straight through — nothing is written to the API server's disk.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
+| 0 | `GET` | `http://localhost:4000/api/uploads` | 🌐 — lists these endpoints |
 | 1 | `GET` | `http://localhost:4000/api/uploads/status` | 🌐 |
 | 2 | `POST` | `http://localhost:4000/api/uploads/image` | 🔒 |
 | 3 | `POST` | `http://localhost:4000/api/uploads/images` | 🔒 |
-| 4 | `GET` | `http://localhost:4000/api/uploads` | 🔒 |
+| 4 | `GET` | `http://localhost:4000/api/uploads/library` | 🔒 |
 | 5 | `GET` | `http://localhost:4000/api/uploads/signature` | 🔒 |
 | 6 | `DELETE` | `http://localhost:4000/api/uploads/:id` | 🔒 |
 | 7 | `DELETE` | `http://localhost:4000/api/uploads/public-id/<folder>/<name>` | 🔒 |
@@ -747,9 +767,12 @@ Same, with file field **`files`** repeated. Returns
 `{ uploaded: [...], failed: [{ filename, reason }] }`. If *every* file fails, the
 underlying error is returned rather than a misleading `201`.
 
-### `GET` http://localhost:4000/api/uploads 🔒
+### `GET` http://localhost:4000/api/uploads/library 🔒
 
 The media library. **Query** — `page`, `limit`, `search`.
+
+> The base path `/api/uploads` is a **public index** listing these endpoints, so
+> the library lives at `/library` rather than on the prefix itself.
 
 ### `GET` http://localhost:4000/api/uploads/signature 🔒
 
@@ -928,7 +951,7 @@ PostgREST exposes no multi-statement transactions, which shapes two behaviours:
 
 ```bash
 npm run routes      # print every registered route
-npm run test:api    # exercise all 147 endpoints and report coverage
+npm run test:api    # exercise all 151 endpoints and report coverage
 ```
 
 `test:api` derives its checklist from the Express router itself, so an endpoint

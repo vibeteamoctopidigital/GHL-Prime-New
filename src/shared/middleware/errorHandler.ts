@@ -53,8 +53,68 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
   })
 }
 
+interface RouterLayer {
+  route?: { path: string; methods: Record<string, boolean> }
+  name?: string
+  handle?: { stack?: RouterLayer[] }
+  regexp?: RegExp & { fast_slash?: boolean }
+}
+
+/**
+ * Which HTTP methods the given path accepts, if any.
+ *
+ * Express answers 404 when a path exists but not for the method used — so
+ * opening a POST-only endpoint like /api/auth/login in a browser reads as
+ * "this route is missing" when it is really "wrong verb". This walks the
+ * router so the response can say which verbs the path does accept.
+ */
+function methodsFor(req: Parameters<RequestHandler>[0], target: string): string[] {
+  const found = new Set<string>()
+
+  const walk = (stack: RouterLayer[] | undefined, prefix: string): void => {
+    for (const layer of stack ?? []) {
+      if (layer.route) {
+        const full = `${prefix}${layer.route.path}`.replace(/\/{2,}/g, '/')
+        const pattern = new RegExp(`^${full.replace(/:[^/]+/g, '[^/]+').replace(/\*/g, '.*')}/?$`)
+
+        if (pattern.test(target)) {
+          for (const [method, enabled] of Object.entries(layer.route.methods)) {
+            if (enabled && method !== '_all') found.add(method.toUpperCase())
+          }
+        }
+        continue
+      }
+
+      if (layer.name === 'router' && layer.handle?.stack) {
+        const source = layer.regexp?.source ?? ''
+        const match = /^\^\\\/(?<path>.*?)\\\/\?\(\?=\\\/\|\$\)$/.exec(source)
+        const mount = match?.groups?.['path'] ? `/${match.groups['path'].replace(/\\\//g, '/')}` : ''
+        walk(layer.handle.stack, `${prefix}${mount}`)
+      }
+    }
+  }
+
+  const root = (req.app as unknown as { _router?: { stack: RouterLayer[] } })._router
+  walk(root?.stack, '')
+
+  return [...found]
+}
+
 /** Terminal 404 for unmatched routes — keeps the error envelope consistent. */
 export const notFound: RequestHandler = (req, _res, next) => {
+  const allowed = methodsFor(req, req.path).filter((method) => method !== req.method)
+
+  if (allowed.length > 0) {
+    next(
+      new ApiError(
+        HTTP_STATUS.METHOD_NOT_ALLOWED,
+        `${req.method} is not allowed on ${req.path}. Use ${allowed.sort().join(' or ')}.`,
+        { details: { allowed_methods: allowed.sort() } },
+      ),
+    )
+    return
+  }
+
   next(ApiError.notFound(`Route not found: ${req.method} ${req.originalUrl}`))
 }
 

@@ -63,6 +63,34 @@ ok('auth index lists its endpoints', authIdx.json?.data?.endpoints?.length >= 10
 ok('index paths are fully qualified', String(authIdx.json?.data?.endpoints?.[0]?.path).startsWith('/api/auth/'))
 await api('GET', `${P}/dashboard`, { expect: 200, route: 'GET /api/dashboard/' })
 await api('GET', `${P}/sitemap`, { expect: 200, route: 'GET /api/sitemap/' })
+await api('GET', `${P}/showcase`, { expect: 200, route: 'GET /api/showcase/' })
+await api('GET', `${P}/contact`, { expect: 200, route: 'GET /api/contact/' })
+await api('GET', `${P}/service-surveys`, { expect: 200, route: 'GET /api/service-surveys/' })
+
+// Guard: no module prefix may answer 404. A prefix that only exists to host
+// sub-routes still has to say so — a bare "Route not found" on a documented
+// base URL reads as a broken deployment, which is how this was first reported.
+// 401 is fine (the route exists, it just needs a token).
+const MODULE_BASES = [
+  '', '/auth', '/dashboard', '/case-studies', '/blog', '/team', '/team/members',
+  '/team/experts', '/gallery', '/gallery/categories', '/gallery/images',
+  '/meeting-gallery', '/partner-logos', '/technology-logos', '/showcase',
+  '/showcase/items', '/showcase/stats', '/contact', '/contact/leads',
+  '/service-surveys', '/service-surveys/submissions', '/uploads', '/sitemap', '/health',
+]
+const notFound = []
+for (const base of MODULE_BASES) {
+  const res = await fetch(`${ORIGIN}${P}${base}`)
+  if (res.status === 404) notFound.push(`${P}${base}`)
+}
+ok('no module base path returns 404', notFound.length === 0, notFound.join(', ') || `${MODULE_BASES.length} checked`)
+
+// A GET on a POST-only endpoint should explain the verb, not read as missing.
+const wrongVerb = await api('GET', `${P}/auth/login`, { expect: 405 })
+ok('wrong verb returns 405 with guidance', /Use POST/.test(wrongVerb.json?.message ?? ''), wrongVerb.json?.message)
+ok('405 lists the allowed methods', Array.isArray(wrongVerb.json?.errors?.allowed_methods))
+const reallyMissing = await api('GET', `${P}/definitely-nothing-here`, { expect: 404 })
+ok('a genuinely missing path still 404s', /Route not found/.test(reallyMissing.json?.message ?? ''))
 
 const db = await api('GET', `${P}/health/db`, { expect: 200, route: 'GET /api/health/db' })
 ok('health/db reports latency', typeof db.json?.data?.latency_ms === 'number', `${db.json?.data?.latency_ms}ms`)
@@ -409,8 +437,11 @@ if (single.status === 201) {
 await api('POST', `${P}/uploads/image`, { token: token2, form: mkForm('file', 'x.sh', Buffer.from('#!/bin/sh'), 'application/x-sh'), expect: 400 })
 await api('POST', `${P}/uploads/image`, { token: token2, form: mkForm('file', 'big.png', Buffer.alloc(11 * 1024 * 1024)), expect: 400 })
 await api('GET', `${P}/uploads/signature`, { token: token2, expect: cloudinaryOn ? 200 : 503, route: 'GET /api/uploads/signature' })
-await api('GET', `${P}/uploads/`, { token: token2, expect: 200, route: 'GET /api/uploads/' })
-await api('GET', `${P}/uploads/`, { expect: 401 })
+await api('GET', `${P}/uploads/library`, { token: token2, expect: 200, route: 'GET /api/uploads/library' })
+await api('GET', `${P}/uploads/library`, { expect: 401 })
+// The base path is a public index, so a browser hitting it gets guidance.
+const upIdx = await api('GET', `${P}/uploads`, { expect: 200, route: 'GET /api/uploads/' })
+ok('uploads index is public and lists endpoints', upIdx.json?.data?.endpoints?.length >= 6)
 await api('DELETE', `${P}/uploads/00000000-0000-0000-0000-000000000000`, { token: token2, expect: [404, 503], route: 'DELETE /api/uploads/:id' })
 await api('DELETE', `${P}/uploads/public-id/ghlprime/nonexistent`, { token: token2, expect: [200, 404, 503], route: 'DELETE /api/uploads/public-id/*' })
 ok(`uploads behave correctly (cloudinary ${cloudinaryOn ? 'configured' : 'not configured'})`, true)
