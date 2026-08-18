@@ -7,7 +7,7 @@ Every endpoint, with its full URL.
 | **Local base URL** | `http://localhost:4000` |
 | **Production base URL** | `https://<your-project>.vercel.app` |
 | **API prefix** | `/api` |
-| **Total endpoints** | 144 |
+| **Total endpoints** | 147 |
 | **Content type** | `application/json` (uploads use `multipart/form-data`) |
 | **Database** | Supabase PostgreSQL, accessed over PostgREST |
 | **Image storage** | Cloudinary |
@@ -102,11 +102,24 @@ the existing value alone.
 | `/auth/login`, `/auth/refresh` | 10 req | 15 min |
 | `/contact/submit`, `/service-surveys/submit` | 20 req | 1 hour |
 
-### Changing the prefix
+### The prefix is fixed
 
-`/api` comes from the `API_PREFIX` environment variable and is applied in one
-place (`src/app.ts`). Setting `API_PREFIX=/api/v2` moves every route at once —
-no code changes.
+Every route lives under `/api`. That is a constant in `src/config/constants.ts`,
+**not** an environment variable — a stale `API_PREFIX` in a deployment's settings
+would otherwise move the whole API and make every documented URL 404, which is
+near-impossible to diagnose from outside. Versioning, if ever wanted, is a
+deliberate one-line change there.
+
+### Base paths are browsable
+
+Hitting a module's base path in a browser lists what lives underneath it:
+
+```bash
+curl http://localhost:4000/api          # every module
+curl http://localhost:4000/api/auth     # every auth endpoint
+```
+
+So a prefix never answers with a bare "Route not found".
 
 ---
 
@@ -130,12 +143,11 @@ no code changes.
 
 ## 3. Auth
 
-```
-http://localhost:4000/api/auth
-```
+**Base path:** `http://localhost:4000/api/auth` — a `GET` here lists the endpoints below.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
+| 0 | `GET` | `http://localhost:4000/api/auth` | 🌐 — lists these endpoints |
 | 1 | `POST` | `http://localhost:4000/api/auth/login` | 🌐 |
 | 2 | `POST` | `http://localhost:4000/api/auth/refresh` | 🌐 |
 | 3 | `POST` | `http://localhost:4000/api/auth/logout` | 🌐 |
@@ -225,12 +237,11 @@ Deletes the user; their refresh tokens cascade away.
 
 ## 4. Dashboard
 
-```
-http://localhost:4000/api/dashboard
-```
+**Base path:** `http://localhost:4000/api/dashboard` — a `GET` here lists the endpoints below.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
+| 0 | `GET` | `http://localhost:4000/api/dashboard` | 🌐 — lists these endpoints |
 | 1 | `GET` | `http://localhost:4000/api/dashboard/summary` | 🔒 |
 | 2 | `GET` | `http://localhost:4000/api/dashboard/counts` | 🔒 |
 | 3 | `GET` | `http://localhost:4000/api/dashboard/recent` | 🔒 |
@@ -259,9 +270,7 @@ contact leads and service surveys.
 
 ## 5. Case studies
 
-```
-http://localhost:4000/api/case-studies
-```
+**Base path:** `http://localhost:4000/api/case-studies` — a `GET` here lists the endpoints below.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
@@ -318,9 +327,7 @@ Create, update and delete each trigger a sitemap refresh.
 
 ## 6. Blog
 
-```
-http://localhost:4000/api/blog
-```
+**Base path:** `http://localhost:4000/api/blog` — a `GET` here lists the endpoints below.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
@@ -363,9 +370,7 @@ curl "http://localhost:4000/api/blog/related?category=Automation&exclude=my-post
 
 ## 7. Team
 
-```
-http://localhost:4000/api/team
-```
+**Base path:** `http://localhost:4000/api/team` — a `GET` here lists the endpoints below.
 
 Two separate collections:
 
@@ -430,9 +435,7 @@ never observed half-reordered.
 
 ## 8. Gallery
 
-```
-http://localhost:4000/api/gallery
-```
+**Base path:** `http://localhost:4000/api/gallery` — a `GET` here lists the endpoints below.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
@@ -473,9 +476,7 @@ http://localhost:4000/api/gallery
 
 ## 9. Meeting gallery
 
-```
-http://localhost:4000/api/meeting-gallery
-```
+**Base path:** `http://localhost:4000/api/meeting-gallery` — a `GET` here lists the endpoints below.
 
 The homepage meeting-image strip.
 
@@ -496,9 +497,7 @@ The homepage meeting-image strip.
 
 ## 10. Partner logos
 
-```
-http://localhost:4000/api/partner-logos
-```
+**Base path:** `http://localhost:4000/api/partner-logos` — a `GET` here lists the endpoints below.
 
 The "trusted by" strip.
 
@@ -524,9 +523,7 @@ The "trusted by" strip.
 
 ## 11. Technology logos
 
-```
-http://localhost:4000/api/technology-logos
-```
+**Base path:** `http://localhost:4000/api/technology-logos` — a `GET` here lists the endpoints below.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
@@ -546,9 +543,7 @@ http://localhost:4000/api/technology-logos
 
 ## 12. Showcase
 
-```
-http://localhost:4000/api/showcase
-```
+**Base path:** `http://localhost:4000/api/showcase` — a `GET` here lists the endpoints below.
 
 The "Shipped Evidence" section: paired origin → enterprise-adaptation cards plus
 a stat bar, placed per page.
@@ -600,9 +595,7 @@ alone; sending `[]` clears them. Deleting an item cascades to its placements.
 
 ## 13. Contact
 
-```
-http://localhost:4000/api/contact
-```
+**Base path:** `http://localhost:4000/api/contact` — a `GET` here lists the endpoints below.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
@@ -658,9 +651,7 @@ PATCH /api/contact/leads/:id/status
 
 ## 14. Service surveys
 
-```
-http://localhost:4000/api/service-surveys
-```
+**Base path:** `http://localhost:4000/api/service-surveys` — a `GET` here lists the endpoints below.
 
 Submissions from the multi-step forms on every `/services/*` page.
 
@@ -693,9 +684,7 @@ Shares the same status pipeline as contact leads.
 
 ## 15. Image uploads
 
-```
-http://localhost:4000/api/uploads
-```
+**Base path:** `http://localhost:4000/api/uploads` — a `GET` here lists the endpoints below.
 
 Local files are uploaded to **Cloudinary**. The file is held in memory and
 streamed straight through — nothing is written to the API server's disk.
@@ -817,12 +806,11 @@ Removes the media-library record and attempts to delete the remote file.
 
 ## 16. Sitemap
 
-```
-http://localhost:4000/api/sitemap
-```
+**Base path:** `http://localhost:4000/api/sitemap` — a `GET` here lists the endpoints below.
 
 | # | Method | Full URL | Access |
 |---|---|---|---|
+| 0 | `GET` | `http://localhost:4000/api/sitemap` | 🌐 — lists these endpoints |
 | 1 | `POST` | `http://localhost:4000/api/sitemap/refresh` | Token-guarded |
 | 2 | `GET` | `http://localhost:4000/api/sitemap/xml` | 🌐 |
 
@@ -940,7 +928,7 @@ PostgREST exposes no multi-statement transactions, which shapes two behaviours:
 
 ```bash
 npm run routes      # print every registered route
-npm run test:api    # exercise all 144 endpoints and report coverage
+npm run test:api    # exercise all 147 endpoints and report coverage
 ```
 
 `test:api` derives its checklist from the Express router itself, so an endpoint

@@ -6,7 +6,7 @@ import cookieParser from 'cookie-parser'
 import morgan from 'morgan'
 
 import env from './config/env.js'
-import { HTTP_STATUS } from './config/constants.js'
+import { API_PREFIX, HTTP_STATUS } from './config/constants.js'
 import apiRoutes from './routes/index.js'
 import { apiLimiter } from './shared/middleware/rateLimiter.js'
 import errorHandler, { notFound } from './shared/middleware/errorHandler.js'
@@ -52,11 +52,11 @@ export function createApp(): Express {
   }
 
   // --- API ------------------------------------------------------------------
-  app.use(env.API_PREFIX, apiLimiter, apiRoutes)
+  app.use(API_PREFIX, apiLimiter, apiRoutes)
 
   // Root banner.
   app.get('/', (_req, res) => {
-    res.json({ success: true, message: 'GHL Prime API is running', data: { docs: env.API_PREFIX } })
+    res.json({ success: true, message: 'GHL Prime API is running', data: { docs: API_PREFIX } })
   })
 
   // --- Compatibility routes -------------------------------------------------

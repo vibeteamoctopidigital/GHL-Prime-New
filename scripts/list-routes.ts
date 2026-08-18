@@ -12,7 +12,8 @@
 import path from 'node:path'
 import { writeFileSync } from 'node:fs'
 import createApp from '../src/app.js'
-import env, { ROOT_DIR } from '../src/config/env.js'
+import { ROOT_DIR } from '../src/config/env.js'
+import { API_PREFIX } from '../src/config/constants.js'
 
 interface RouteEntry {
   method: string
@@ -94,8 +95,8 @@ if (process.argv.includes('--json')) {
   const groups = new Map<string, RouteEntry[]>()
 
   for (const route of routes) {
-    const group = route.path.startsWith(env.API_PREFIX)
-      ? (route.path.slice(env.API_PREFIX.length).split('/')[1] ?? 'root')
+    const group = route.path.startsWith(API_PREFIX)
+      ? (route.path.slice(API_PREFIX.length).split('/')[1] ?? 'root')
       : 'compat'
 
     groups.set(group, [...(groups.get(group) ?? []), route])

@@ -39,7 +39,6 @@ const csv = (value: string): string[] =>
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
-  API_PREFIX: z.string().startsWith('/').default('/api'),
 
   // --- Supabase (database via PostgREST) ------------------------------------
   // All data access uses the secret (service-role) key over HTTPS. There is no

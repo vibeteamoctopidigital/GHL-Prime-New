@@ -1,6 +1,6 @@
 /**
  * Regenerates public/sitemap.xml from the database.
- * The build-time equivalent of POST /api/v1/sitemap/refresh, replacing the old
+ * The build-time equivalent of POST /api/sitemap/refresh, replacing the old
  * scripts/generate-sitemap.mjs that read from Supabase.
  *
  *   npm run sitemap:refresh

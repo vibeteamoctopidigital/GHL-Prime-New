@@ -103,6 +103,25 @@ Alternatively set `CLOUDINARY_URL` alone
 Uploads are **optional**: without these the API boots normally, logs a warning,
 and only `/uploads/*` returns `503`.
 
+### API_PREFIX
+
+Routes are served under `/api`. That value comes from the `API_PREFIX` environment
+variable, so **anything set in Vercel → Settings → Environment Variables overrides
+the code default**. A leftover `API_PREFIX=/api/v1` there will keep serving
+`/api/v1` no matter what the repository says.
+
+Either delete the variable or set it to `/api`, then redeploy.
+
+Confirm which prefix a deployment is actually using — the root route reports it:
+
+```bash
+curl https://<your-project>.vercel.app/
+# -> { "success": true, "message": "GHL Prime API is running", "data": { "docs": "/api" } }
+```
+
+If that says `/api/v1`, the environment variable is the cause; the code default
+is `/api`.
+
 ### Do not set
 
 `PORT` — Vercel assigns it. `SITEMAP_OUTPUT_DIR` — unused on serverless (§4).

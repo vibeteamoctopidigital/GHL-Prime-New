@@ -1,5 +1,16 @@
 /** Shared, non-secret constants. Anything environment-specific lives in env.ts. */
 
+/**
+ * Where every route is mounted.
+ *
+ * Deliberately a constant rather than an environment variable: a stale
+ * API_PREFIX left in a deployment's settings silently moves the entire API and
+ * makes every documented URL 404, which is impossible to diagnose from the
+ * outside. Versioning, if it is ever wanted, belongs in a deliberate code
+ * change here — not in a dashboard field.
+ */
+export const API_PREFIX = '/api'
+
 /** Mirrors the Postgres "UserRole" enum. */
 export const UserRole = {
   ADMIN: 'ADMIN',

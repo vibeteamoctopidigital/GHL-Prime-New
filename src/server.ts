@@ -1,5 +1,6 @@
 import type { Server } from 'node:http'
 import env from './config/env.js'
+import { API_PREFIX } from './config/constants.js'
 import { connectDatabase, disconnectDatabase } from './config/supabase.js'
 import { reportCloudinaryStatus } from './config/cloudinary.js'
 import logger from './shared/utils/logger.js'
@@ -12,7 +13,7 @@ async function bootstrap(): Promise<Server> {
   const app = createApp()
 
   const server = app.listen(env.PORT, () => {
-    logger.info(`GHL Prime API listening on http://localhost:${env.PORT}${env.API_PREFIX}`)
+    logger.info(`GHL Prime API listening on http://localhost:${env.PORT}${API_PREFIX}`)
     logger.info(`Environment: ${env.NODE_ENV}`)
     logger.info(`Allowed origins: ${env.corsOrigins.join(', ') || '(none)'}`)
   })

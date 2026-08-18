@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import env from '../config/env.js'
+import { API_PREFIX } from '../config/constants.js'
 
 import healthRoutes from '../modules/health/health.routes.js'
 import authRoutes from '../modules/auth/auth.routes.js'
@@ -61,7 +62,7 @@ router.get('/', (_req, res) => {
       version: '1.0.0',
       environment: env.NODE_ENV,
       endpoints: routes.map((route) => ({
-        path: `${env.API_PREFIX}${route.path}`,
+        path: `${API_PREFIX}${route.path}`,
         description: route.description,
       })),
     },

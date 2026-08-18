@@ -4,8 +4,23 @@ import asyncHandler from '../../shared/utils/asyncHandler.js'
 import ApiError from '../../shared/utils/ApiError.js'
 import { sendOk } from '../../shared/utils/ApiResponse.js'
 import sitemapService from './sitemap.service.js'
+import createModuleIndex from '../../shared/factories/createModuleIndex.js'
 
 const router = Router()
+
+/** GET /sitemap — lists what lives under this prefix. */
+router.get('/', createModuleIndex('/sitemap', [
+  {
+    "method": "POST",
+    "path": "/refresh",
+    "description": "Regenerate the sitemap"
+  },
+  {
+    "method": "GET",
+    "path": "/xml",
+    "description": "Serve sitemap.xml"
+  }
+]))
 
 /**
  * Optional shared-secret guard, ported from the old serverless function: when

@@ -55,6 +55,15 @@ await api('GET', '/', { expect: 200, route: 'GET /' })
 const index = await api('GET', `${P}/`, { expect: 200, route: 'GET /api/' })
 ok('index lists all modules', index.json?.data?.endpoints?.length >= 14, `${index.json?.data?.endpoints?.length} modules`)
 await api('GET', `${P}/health/`, { expect: 200, route: 'GET /api/health/' })
+
+// Module base paths list what lives under them, so a browser hitting a prefix
+// gets guidance rather than a bare 404.
+const authIdx = await api('GET', `${P}/auth`, { expect: 200, route: 'GET /api/auth/' })
+ok('auth index lists its endpoints', authIdx.json?.data?.endpoints?.length >= 10, `${authIdx.json?.data?.endpoints?.length} endpoints`)
+ok('index paths are fully qualified', String(authIdx.json?.data?.endpoints?.[0]?.path).startsWith('/api/auth/'))
+await api('GET', `${P}/dashboard`, { expect: 200, route: 'GET /api/dashboard/' })
+await api('GET', `${P}/sitemap`, { expect: 200, route: 'GET /api/sitemap/' })
+
 const db = await api('GET', `${P}/health/db`, { expect: 200, route: 'GET /api/health/db' })
 ok('health/db reports latency', typeof db.json?.data?.latency_ms === 'number', `${db.json?.data?.latency_ms}ms`)
 

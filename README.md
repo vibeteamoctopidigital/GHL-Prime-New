@@ -76,7 +76,7 @@ backend/
 ├── scripts/
 │   ├── seed.ts                # creates the admin account
 │   ├── list-routes.ts         # dumps the live route table
-│   ├── test-api.mjs           # exercises all 144 endpoints
+│   ├── test-api.mjs           # exercises all 147 endpoints
 │   └── refresh-sitemap.ts     # build-time sitemap generation
 └── src/
     ├── server.ts              # bootstrap, listen, graceful shutdown
@@ -192,7 +192,7 @@ requires a token — the replacement for the old
 
 ## API reference
 
-**Full reference: [`docs/API.md`](docs/API.md)** — all 144 endpoints with their full
+**Full reference: [`docs/API.md`](docs/API.md)** — all 147 endpoints with their full
 URLs, request and response fields, error codes, and the data model.
 
 Deploying: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) (Vercel) ·
@@ -230,8 +230,9 @@ Sortable collections (`team/members`, `team/experts`, `gallery/categories`,
 | GET | `/:id` | public |
 | POST · PUT/PATCH · DELETE | `/`, `/:id` | auth |
 
-> **Changing the prefix.** `/api` comes from `API_PREFIX` and is applied in one place
-> (`src/app.ts`). Setting `API_PREFIX=/api/v2` moves every route at once.
+> **The prefix is fixed at `/api`** — a constant in `src/config/constants.ts`, not an
+> environment variable, so no deployment setting can move the API out from under the
+> documented URLs. Base paths like `/api/auth` are browsable and list their endpoints.
 
 ---
 
@@ -266,7 +267,7 @@ keys the `create` action.
 | `npm run db:seed` | Create the admin account (safe to re-run) |
 | `npm run sitemap:refresh` | Rebuild `public/sitemap.xml` |
 | `npm run routes` | Print every registered route, straight from the Express router |
-| `npm run test:api` | Exercise all 144 endpoints against a running server and report coverage |
+| `npm run test:api` | Exercise all 147 endpoints against a running server and report coverage |
 
 `test:api` derives its checklist from the router itself, so an endpoint added without a
 test is reported as uncovered rather than silently skipped.
