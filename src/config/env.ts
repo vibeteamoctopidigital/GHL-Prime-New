@@ -86,6 +86,38 @@ const envSchema = z.object({
   SEED_ADMIN_EMAIL: z.string().email().default('admin@ghlprime.com'),
   SEED_ADMIN_PASSWORD: z.string().min(8).default('Admin@12345'),
   SEED_ADMIN_NAME: z.string().default('GHL Prime Admin'),
+
+  // --- Auto Blog (AI blog publishing) ---------------------------------------
+  // AES-256-GCM key encrypting the Anthropic/OpenAI API keys admins add on the
+  // Auto Blog settings page. Must decode to exactly 32 raw bytes, hex-encoded.
+  // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  TOKEN_ENCRYPTION_KEY: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/i, 'TOKEN_ENCRYPTION_KEY must be 64 hex characters (32 bytes)'),
+
+  // --- Auto Blog admin alert emails (optional) -------------------------------
+  // Deliberately optional, same pattern as Cloudinary: the API must boot and
+  // run without these configured — alerts just no-op with a warning until
+  // they're filled in.
+  SMTP_HOST: z.string().optional().default(''),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_SECURE: z.coerce.boolean().default(false),
+  SMTP_USER: z.string().optional().default(''),
+  SMTP_PASSWORD: z.string().optional().default(''),
+  SMTP_FROM: z.string().optional().default(''),
+  /** Comma-separated list of admin addresses that receive Auto Blog alerts. */
+  ADMIN_ALERT_EMAILS: z.string().optional().default(''),
+
+  // --- Auto Blog: CLI/subscription-based accounts (optional) -----------------
+  // Server-wide default binary paths for the `claude`/`codex` CLIs, used when
+  // an admin hasn't overridden them via the per-install claude_cli_command /
+  // codex_cli_command settings. Absolute paths on Linux because cron/process-
+  // manager environments there often get a minimal PATH that excludes npm
+  // global-install bin dirs — but that path obviously doesn't exist on
+  // Windows (local dev), so fall back to a bare command name there and let
+  // PATH resolve it instead of hardcoding a Unix-only path.
+  CLAUDE_CLI_PATH: z.string().optional().default(process.platform === 'win32' ? 'claude' : '/usr/bin/claude'),
+  CODEX_CLI_PATH: z.string().optional().default(process.platform === 'win32' ? 'codex' : '/usr/bin/codex'),
 })
 
 export type RawEnv = z.infer<typeof envSchema>
@@ -133,6 +165,10 @@ export interface AppEnv extends RawEnv {
   hasCloudinary: boolean
   /** True when an unsigned upload preset is configured. */
   hasUploadPreset: boolean
+  /** True once SMTP is configured — otherwise Auto Blog alert emails no-op with a warning. */
+  hasSmtp: boolean
+  /** Parsed ADMIN_ALERT_EMAILS. */
+  adminAlertEmails: string[]
   /** The limit actually enforced — clamped below the platform cap on serverless. */
   effectiveMaxUploadMb: number
   maxUploadBytes: number
@@ -167,6 +203,8 @@ const hasCloudinary = Boolean(
     raw.CLOUDINARY_URL.startsWith('cloudinary://'),
 )
 
+const hasSmtp = Boolean(raw.SMTP_HOST && raw.SMTP_USER && raw.SMTP_PASSWORD)
+
 export const env: AppEnv = {
   ...raw,
   isProduction: raw.NODE_ENV === 'production',
@@ -177,6 +215,8 @@ export const env: AppEnv = {
     ? raw.SITEMAP_OUTPUT_DIR
     : path.resolve(ROOT_DIR, raw.SITEMAP_OUTPUT_DIR),
   hasCloudinary,
+  hasSmtp,
+  adminAlertEmails: csv(raw.ADMIN_ALERT_EMAILS),
   hasUploadPreset: Boolean(raw.CLOUDINARY_UPLOAD_PRESET),
   effectiveMaxUploadMb,
   maxUploadBytes: Math.round(effectiveMaxUploadMb * 1024 * 1024),

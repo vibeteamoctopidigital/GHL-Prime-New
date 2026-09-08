@@ -59,6 +59,11 @@ export class ApiError extends Error {
     return new ApiError(HTTP_STATUS.INTERNAL_SERVER_ERROR, message, options)
   }
 
+  /** A route that deliberately isn't built — distinct from notFound, which means the URL itself is wrong. */
+  static notImplemented(message = 'Not implemented', options?: ApiErrorOptions): ApiError {
+    return new ApiError(HTTP_STATUS.NOT_IMPLEMENTED, message, options)
+  }
+
   static badGateway(message = 'Upstream request failed', options?: ApiErrorOptions): ApiError {
     return new ApiError(HTTP_STATUS.BAD_GATEWAY, message, options)
   }
