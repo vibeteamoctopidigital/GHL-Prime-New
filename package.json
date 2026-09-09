@@ -20,6 +20,8 @@
     "test:api": "tsx scripts/list-routes.ts --json && node scripts/test-api.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/claude-code": "^2.1.266",
+    "@openai/codex": "^0.153.4",
     "@supabase/supabase-js": "^2.112.3",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.10.0",
@@ -57,6 +59,7 @@
   },
   "allowScripts": {
     "esbuild@0.28.2": true,
-    "node-pty@1.1.0": true
+    "node-pty@1.1.0": true,
+    "@anthropic-ai/claude-code@2.1.266": true
   }
 }

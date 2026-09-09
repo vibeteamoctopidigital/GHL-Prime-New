@@ -16,6 +16,12 @@ import env from '../../config/env.js'
  * CLI flag choices below match the source repo's verified-live invocation
  * shape (Claude Code CLI, Codex CLI). If the installed CLI version changes
  * its flags, this is the one place to update.
+ *
+ * `@anthropic-ai/claude-code` / `@openai/codex` are real project
+ * dependencies (see package.json) specifically so this runs as a single
+ * persistent service — e.g. Railway — with nothing else to deploy;
+ * env.ts's CLAUDE_CLI_PATH/CODEX_CLI_PATH point at the binaries `npm
+ * install` puts in this project's own node_modules/.bin by default.
  */
 
 const GENERATION_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes — a full blog post generation
@@ -210,14 +216,16 @@ const CLI_SYSTEM_PROMPT =
  * used for the OpenAI and research paths (see blogAi.engine.ts's
  * parseAiResponse()), which already has to handle a malformed reply anyway.
  */
-export async function invokeClaudeCli(opts: {
+export interface ClaudeWriteOpts {
   prompt: string
   jsonSchema: Record<string, unknown>
   token: string
   authType: 'oauth' | 'api_key'
   model?: string | undefined
   cliPath?: string | undefined
-}): Promise<string> {
+}
+
+export async function invokeClaudeCli(opts: ClaudeWriteOpts): Promise<string> {
   const args = ['-p', STDIN_PROMPT_INSTRUCTION, '--output-format', 'text', '--tools', '', '--no-session-persistence', '--system-prompt', CLI_SYSTEM_PROMPT]
   if (opts.model) args.push('--model', opts.model)
 
@@ -247,13 +255,15 @@ export async function invokeClaudeCli(opts: {
  * `--json-schema`: the output is free text ending in a JSON blob, parsed
  * defensively by blogAi.research.ts, same as the direct-API path.
  */
-export async function researchWithClaudeCli(opts: {
+export interface ClaudeResearchOpts {
   prompt: string
   token: string
   authType: 'oauth' | 'api_key'
   model?: string | undefined
   cliPath?: string | undefined
-}): Promise<string> {
+}
+
+export async function researchWithClaudeCli(opts: ClaudeResearchOpts): Promise<string> {
   const args = ['-p', STDIN_PROMPT_INSTRUCTION, '--output-format', 'text', '--no-session-persistence', '--system-prompt', CLI_SYSTEM_PROMPT]
   if (opts.model) args.push('--model', opts.model)
 
@@ -269,13 +279,15 @@ export async function researchWithClaudeCli(opts: {
   return stdout
 }
 
-/** Trivial ping used by the "Test" button on a Claude account row. */
-export async function testClaudeCliAccount(opts: {
+export interface ClaudeTestOpts {
   token: string
   authType: 'oauth' | 'api_key'
   model?: string | undefined
   cliPath?: string | undefined
-}): Promise<TestResult> {
+}
+
+/** Trivial ping used by the "Test" button on a Claude account row. */
+export async function testClaudeCliAccount(opts: ClaudeTestOpts): Promise<TestResult> {
   const args = ['-p', 'Reply with the single word OK.', '--output-format', 'text', '--tools', '', '--no-session-persistence', '--system-prompt', CLI_SYSTEM_PROMPT]
   if (opts.model) args.push('--model', opts.model)
 
@@ -343,16 +355,34 @@ async function runCodexExec(prompt: string, opts: { schema?: Record<string, unkn
   })
 }
 
-export function invokeCodexCli(opts: { prompt: string; jsonSchema: Record<string, unknown>; model?: string | undefined; cliPath?: string | undefined }): Promise<string> {
+export interface CodexWriteOpts {
+  prompt: string
+  jsonSchema: Record<string, unknown>
+  model?: string | undefined
+  cliPath?: string | undefined
+}
+
+export function invokeCodexCli(opts: CodexWriteOpts): Promise<string> {
   return runCodexExec(opts.prompt, { schema: opts.jsonSchema, model: opts.model, timeoutMs: GENERATION_TIMEOUT_MS, cliPath: opts.cliPath })
 }
 
-export function researchWithCodexCli(opts: { prompt: string; model?: string | undefined; cliPath?: string | undefined }): Promise<string> {
+export interface CodexResearchOpts {
+  prompt: string
+  model?: string | undefined
+  cliPath?: string | undefined
+}
+
+export function researchWithCodexCli(opts: CodexResearchOpts): Promise<string> {
   return runCodexExec(opts.prompt, { model: opts.model, timeoutMs: RESEARCH_TIMEOUT_MS, cliPath: opts.cliPath })
 }
 
-/** Reports whether the ambient VPS-level `codex login --device-auth` session is still valid. */
-export async function testCodexConnection(opts: { model?: string | undefined; cliPath?: string | undefined } = {}): Promise<TestResult> {
+export interface CodexTestOpts {
+  model?: string | undefined
+  cliPath?: string | undefined
+}
+
+/** Reports whether the ambient login-level `codex login --device-auth` session is still valid. */
+export async function testCodexConnection(opts: CodexTestOpts = {}): Promise<TestResult> {
   try {
     const output = await runCodexExec('Reply with the single word OK.', { model: opts.model, timeoutMs: TEST_TIMEOUT_MS, cliPath: opts.cliPath })
     return { ok: true, message: output.trim().slice(0, 200) }

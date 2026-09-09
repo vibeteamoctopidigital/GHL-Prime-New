@@ -1,9 +1,10 @@
-import pty, { type IPty } from 'node-pty'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import env from '../../config/env.js'
+import logger from '../../shared/utils/logger.js'
+import type { IPty } from 'node-pty'
 
 /**
  * node-pty process mechanics for the two "connect from this browser" login
@@ -15,14 +16,38 @@ import env from '../../config/env.js'
  * pseudo-terminal to behave correctly — plain stdio pipes are not
  * sufficient here.
  *
- * Requires `node-pty`'s native addon to have compiled successfully at
- * `npm install` time — this needs build tools (python3, make, a C++
- * compiler) on whatever machine runs this. If that install step failed,
- * this whole module will throw at import time; there's no silent fallback.
+ * node-pty is a native addon — it needs to have compiled successfully at
+ * `npm install` time (build tools on a VPS) AND its compiled binary needs to
+ * actually load in whatever runtime executes it. On a serverless platform
+ * (Vercel) that second part can fail even when the first succeeded, since
+ * the build machine and the Lambda runtime aren't guaranteed identical. It's
+ * therefore loaded lazily, on first actual use, instead of at module import
+ * time: a broken/incompatible binary then only fails the two connect-start
+ * calls below (surfaced to the admin as a clear error, with "paste a token"
+ * still available as the other, pty-free connect path) instead of throwing
+ * at import time and taking down every route that transitively imports this
+ * file — which, before this fix, meant the whole API.
  */
 
 const CLAUDE_BIN = env.CLAUDE_CLI_PATH || '/usr/bin/claude'
 const CODEX_BIN = env.CODEX_CLI_PATH || '/usr/bin/codex'
+
+type PtyModule = typeof import('node-pty')
+let ptyModule: PtyModule | null | undefined // undefined = not yet attempted
+
+async function loadPty(): Promise<PtyModule> {
+  if (ptyModule === undefined) {
+    try {
+      ptyModule = await import('node-pty')
+    } catch (error) {
+      ptyModule = null
+      logger.error('node-pty could not be loaded — "Connect in browser" is unavailable in this environment:', error instanceof Error ? error.message : error)
+    }
+  }
+
+  if (!ptyModule) throw new Error('Interactive connect is not available in this environment. Use "Paste a token" instead.')
+  return ptyModule
+}
 
 async function makeScratchDir(prefix: string): Promise<string> {
   const dir = path.join(os.tmpdir(), `${prefix}-${randomUUID()}`)
@@ -50,6 +75,7 @@ async function spawnInScratchDir(
   prefix: string,
   extraEnvFromCwd: (cwd: string) => Record<string, string> = () => ({}),
 ): Promise<PtySpawnResult> {
+  const pty = await loadPty()
   const cwd = await makeScratchDir(prefix)
 
   // Windows can't CreateProcess a .cmd/.bat file directly — which is exactly

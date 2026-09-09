@@ -9,7 +9,7 @@ alerts on failure.
 **Generation runs through the `claude`/`codex` CLIs, authenticated with a
 subscription login, not a metered API key** — this bills against the
 flat-rate subscription instead of per-token API usage. A plain API key
-stays available as an advanced/fallback option. See section 6 for why this
+stays available as an advanced/fallback option. See section 7 for why this
 isn't the direct-API SDK approach an earlier version of this doc described.
 
 Entirely admin-only: every route under `/api/blog-ai` requires
@@ -66,6 +66,11 @@ SMTP_USER=
 SMTP_PASSWORD=
 SMTP_FROM="GHL Prime Auto Blog <noreply@ghlprime.com>"
 ADMIN_ALERT_EMAILS=admin@ghlprime.com
+
+# Optional — see "Optional extra: the public trigger endpoint" in section 4.
+# Left unset (the default), /blog-ai/cron/trigger always rejects; the
+# in-process scheduler poller runs regardless, with or without this set.
+BLOG_AI_CRON_SECRET=
 ```
 
 Generate `TOKEN_ENCRYPTION_KEY` with:
@@ -229,22 +234,19 @@ re-run it (or explicitly `revoke`/`enable row level security` on the new
 tables) — the API itself is unaffected either way, since it always uses
 the service-role key.
 
-### Install the CLIs on the VPS
+### The CLIs (already installed — nothing extra to do)
 
-Generation shells out to the `claude` and (optionally) `codex` CLIs, so
-they need to actually be installed and reachable before anything else here
-works:
+`@anthropic-ai/claude-code` and `@openai/codex` are real entries in this
+project's `package.json` `dependencies` — a plain `npm install` (which
+Railway, or any host, already runs to deploy this app) installs both
+automatically, with no separate global install step and no second service
+to deploy. `env.ts`'s `CLAUDE_CLI_PATH`/`CODEX_CLI_PATH` default to the
+binaries that lands in this project's own `node_modules/.bin`.
 
-```bash
-npm install -g @anthropic-ai/claude-code
-# and, if you want the Codex/ChatGPT fallback:
-npm install -g @openai/codex   # package name may differ — install whatever OpenAI's current Codex CLI package is
-```
-
-Confirm both resolve on the VPS (`which claude`, `which codex`). If they're
-not on `PATH` for the user this backend runs as (common with cron/process
-managers), either fix `PATH` or set `claude_cli_command` / `codex_cli_command`
-in settings to the absolute binary path.
+If you ever want to point at a different install instead (a global one, or
+a specific version pinned outside `package.json`), override it per-install
+via the `claude_cli_command` / `codex_cli_command` settings fields — set to
+an absolute path, and that wins over the bundled default.
 
 ### Connect a Claude account (recommended — avoids API billing)
 
@@ -269,8 +271,10 @@ whole server. Turn it on with `codexEnabled: true` in settings, then either
 click **Connect in browser** on the Codex panel (`POST /codex/connect/start`
 → poll `GET /codex/connect/:sessionId` — no code to paste back, it approves
 itself once you authorize in your browser) or run `codex login --device-auth`
-directly over SSH. Check it any time with `GET /codex/status`, disconnect
-with `POST /codex/disconnect`.
+directly in a shell on the deployed instance (Railway's dashboard has a
+built-in **Shell** tab for exactly this, or use the `railway shell` CLI
+command — no SSH setup needed). Check it any time with `GET /codex/status`,
+disconnect with `POST /codex/disconnect`.
 
 **Cover images always need a real OpenAI API key** — neither the Codex
 ambient login nor any Claude account can generate images; add one via
@@ -362,45 +366,99 @@ avoid linking to them.
 
 ## 4. Scheduling
 
-As of the in-process scheduler (`blogAi.scheduler.ts`), an external VPS
-crontab entry is **optional**, not required — the running API process
-schedules its own daily generation and review-window sweep internally:
+`blogAi.scheduler.ts`'s `runDueBlogAiTasks()` is the single, stateless "is a
+post due right now" check — safe to call as often as you like.
 
-- **Daily generation** fires once at `schedule_hour:schedule_minute` UTC
-  (both admin-editable from the Auto Blog page, no restart needed — saving
-  settings re-arms the schedule immediately via `rescheduleBlogAiCron()`).
-  Gated on `auto_blog_enabled`; skipped entirely when off. On failure it
-  retries automatically — at least once, never more than 3 attempts total —
-  before giving up for the day and relying on the existing failure-alert
-  email. Every attempt forces `billingSafeOnly: true`: an unattended
-  scheduled run can only use a connected Claude/Codex subscription login,
-  never a metered API-key account, even if one is configured as a manual-run
-  fallback.
-- **Review-window sweep** runs unconditionally every 5 minutes, independent
-  of `auto_blog_enabled` — a draft already awaiting review still needs its
-  timeout handled on a day nothing new generates.
+- **Daily generation** is due once `schedule_hour:schedule_minute` UTC has
+  passed today (both admin-editable from the Auto Blog page — takes effect
+  on the very next check, no restart or re-arming needed, since settings are
+  read fresh every time). Gated on `auto_blog_enabled`; skipped entirely
+  when off. On failure it's retried by the NEXT check that comes in — at
+  least once, never more than 3 failed attempts since today's scheduled
+  moment — before giving up for the day and relying on the existing
+  failure-alert email. Every attempt forces `billingSafeOnly: true`: an
+  unattended scheduled run can only use a connected Claude/Codex
+  subscription login, never a metered API-key account, even if one is
+  configured as a manual-run fallback.
+- **Review-window sweep** runs on every single check, unconditionally,
+  independent of `auto_blog_enabled` — a draft already awaiting review still
+  needs its timeout handled on a day nothing new generates.
 
 `POST /run-now` remains a separate, ungated manual trigger for
 testing/on-demand use, unaffected by `auto_blog_enabled` — it does not run
 the sweep itself and may use a metered API-key account if one is configured.
 
-If you still prefer OS-level crontab (e.g. running the API as multiple
-replicas, where only one process's in-process scheduler should really fire),
-`scripts/runBlogAi.ts` still works standalone:
+### Primary mechanism: the in-process poller (Railway, or any persistent host)
+
+`server.ts`'s `bootstrap()` calls `initBlogAiScheduler()`, which arms an
+in-process `node-cron` poll every 5 minutes calling `runDueBlogAiTasks()`
+directly. This is the whole story on Railway (or any host that runs
+`npm start` as a long-lived process) — nothing else to configure, no
+external scheduler, no second service.
+
+If you'd rather use OS-level crontab instead (e.g. running the API as
+multiple replicas, where only one process's in-process poller should really
+fire), `scripts/runBlogAi.ts` still works standalone — don't run both
+against the same database, pick one:
 
 ```
 */5 * * * * cd /path/to/backend && npm run blog-ai:cron >> /var/log/blog-ai.log 2>&1
 ```
 
-Don't run both against the same database — the schedule/gating logic
-differs slightly (the script's own `shouldRunNow()` heuristics vs. the
-in-process scheduler's direct settings read), and while `blog_ai_runs`'s
-"already running" check prevents an overlapping double-write, it's needless
-redundancy. Pick one.
+### Optional extra: the public trigger endpoint
+
+`POST /blog-ai/cron/trigger` is a **public** route (registered before the
+admin-JWT gate in `blogAi.routes.ts`) that calls `runDueBlogAiTasks()` once
+per hit, guarded by `BLOG_AI_CRON_SECRET` (`requireCronSecret` in
+`blogAi.controller.ts`) and a dedicated rate limit (`cronTriggerLimiter`).
+It exists as a manual-test/backup mechanism — e.g. hit it by hand to force
+an immediate due-check without waiting up to 5 minutes for the poller, or
+point an uptime monitor at it as a second signal. Leave `BLOG_AI_CRON_SECRET`
+unset (the default) and this route just always rejects; it has no effect on
+the in-process poller either way, which runs regardless.
 
 ---
 
-## 5. Email alerts — what they cover, and what they don't
+## 5. Deploying to Railway (all-in-one, no second service)
+
+`claude`/`codex`'s platform binaries are roughly 210MB and 380MB
+respectively. That's far past what a **Vercel serverless function** can
+bundle (~250MB unzipped limit) — this feature previously needed a separate
+always-on worker process for exactly that reason. **Railway runs a normal
+persistent container instead**, with no such size ceiling, so that split is
+unnecessary there: everything (dashboard, API, the in-process scheduler,
+and the CLI calls themselves) runs as one deployed service.
+
+1. Create a Railway service pointed at this repo. If your repo also
+   contains the frontend as a sibling folder, set the service's **Root
+   Directory** to `GHL-Prime-Backend` so Railway builds/runs this project
+   specifically.
+2. Railway auto-detects the `build` and `start` scripts in `package.json`
+   (Nixpacks) — no extra config needed. `npm install` during the build
+   already installs `@anthropic-ai/claude-code` and `@openai/codex` as
+   regular dependencies (see "The CLIs" above); nothing to install
+   separately.
+3. Set the required environment variables in Railway's dashboard —
+   `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `JWT_ACCESS_SECRET`,
+   `JWT_REFRESH_SECRET`, `TOKEN_ENCRYPTION_KEY` at minimum (see
+   "Environment variables" above for the full list).
+4. Deploy. Once it's live, connect a Claude account from the AI Connections
+   page exactly as described above (paste a token, or "Connect in
+   browser" — both work normally here since this is a real persistent
+   process, not a serverless function: in-memory connect sessions and
+   `node-pty` both behave exactly like they would on a VPS).
+5. If you want Codex too, either use its "Connect in browser" button or run
+   `codex login --device-auth` from Railway's **Shell** tab (or
+   `railway shell` via the CLI) — this needs to happen on the deployed
+   instance specifically, since Codex's login is ambient/host-bound rather
+   than a portable token like Claude's.
+
+That's the whole deployment — no VPS, no separate worker, no external cron
+service required. The scheduler runs itself (section 4).
+
+---
+
+## 6. Email alerts — what they cover, and what they don't
 
 Alerts fire while the Node process is running, for:
 - A generation run failing (debounced — at most one email per 30 minutes
@@ -417,25 +475,34 @@ it's a one-time account setup outside this codebase.
 
 ---
 
-## 6. Why the CLI/subscription approach (and its real risks)
+## 7. Why the CLI/subscription approach (and its real risks)
 
 An earlier version of this feature called the Anthropic/OpenAI APIs
 directly (`@anthropic-ai/sdk`, `openai`), which is simpler and needs no
 native dependencies — but bills per token, which adds up fast at
-auto-blogging volume. Since this backend runs on a persistent VPS (not
-serverless), shelling out to the `claude`/`codex` CLIs authenticated with a
-subscription login is feasible here, and bills at the subscription's
-flat rate instead. That's the whole reason for this design — it isn't free
-of tradeoffs, so know what you're accepting:
+auto-blogging volume. Shelling out to the `claude`/`codex` CLIs
+authenticated with a subscription login bills at the subscription's flat
+rate instead, on whatever persistent host actually runs them (Railway, or a
+VPS). That's the whole reason for this design — it isn't free of tradeoffs,
+so know what you're accepting:
 
-- **`node-pty` needs native compilation** at `npm install` time — the VPS
-  needs build tools (`python3`, `make`, a C++ compiler). This install also
-  requires explicitly approving its install script (`allowScripts` in
-  `package.json` already lists it) — a fresh `npm install` on a machine
-  without that approval will silently skip the native build and the
-  connect-from-browser flow will fail at runtime.
-- **The CLI binaries must be installed separately** — see "Install the
-  CLIs on the VPS" above. Nothing here installs them for you.
+- **The CLI binaries are large (~210MB/~380MB) and need a persistent host**
+  — this is exactly why they're bundled as real `dependencies` rather than
+  something Vercel could ever run: a serverless function has a hard ~250MB
+  unzipped size limit that either binary alone exceeds. Railway (and a
+  plain VPS) run a normal container/process with no such ceiling, so
+  bundling them there is fine. If no CLI account is connected at all,
+  `resolveProviderRuntime()` correctly reports no provider available rather
+  than silently failing.
+- **`node-pty` needs native compilation** at `npm install` time — the host
+  needs build tools (`python3`, `make`, a C++ compiler); Railway's Nixpacks
+  builder already has these. A build environment that skips it (or blocks
+  its install script — `allowScripts` in `package.json` already approves it
+  for this sandbox's own local dev checks, though real `npm install`
+  elsewhere doesn't gate on that at all) means the connect-from-browser flow
+  fails at runtime with a clear "not available in this environment" message
+  instead of crashing the app (see `blogAi.ptyRunner.ts`'s lazy import), and
+  "paste a token" still works as the fallback either way.
 - **A cancelled/failed browser-connect attempt can, if the credential-file
   backup/restore in `blogAi.ptyRunner.ts` is ever bypassed, wipe out a
   previously-working ambient login** — this was observed against the real
