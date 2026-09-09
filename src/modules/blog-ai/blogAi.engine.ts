@@ -199,7 +199,7 @@ function sanitizeGenerated(generated: AiPostOutput): AiPostOutput {
   }
 }
 
-export async function runBlogAiEngine(): Promise<RunResult> {
+export async function runBlogAiEngine(opts: { billingSafeOnly?: boolean } = {}): Promise<RunResult> {
   if (await isAlreadyRunning()) {
     return {
       started: false,
@@ -231,11 +231,11 @@ export async function runBlogAiEngine(): Promise<RunResult> {
       .order('published_at', { ascending: false })
       .limit(30)
 
-    runtime = await blogAiService.resolveProviderRuntime(settings.primary_provider)
+    runtime = await blogAiService.resolveProviderRuntime(settings.primary_provider, opts)
 
     if (!runtime && settings.fallback_enabled) {
       const fallbackProvider: BlogAiProvider = settings.primary_provider === 'anthropic' ? 'openai' : 'anthropic'
-      runtime = await blogAiService.resolveProviderRuntime(fallbackProvider)
+      runtime = await blogAiService.resolveProviderRuntime(fallbackProvider, opts)
     }
 
     if (!runtime) {

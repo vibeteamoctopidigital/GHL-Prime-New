@@ -94,7 +94,9 @@ create table if not exists blog_ai_settings (
   categories text[] not null default array[
     'GoHighLevel', 'Automation', 'AI Agents', 'Case Studies', 'Voice AI', 'CRM', 'Vibe Coding'
   ],
-  schedule_hour integer not null default 6 check (schedule_hour between 0 and 23),
+  auto_blog_enabled boolean not null default true,
+  schedule_hour integer not null default 10 check (schedule_hour between 0 and 23),
+  schedule_minute smallint not null default 0 check (schedule_minute between 0 and 59),
   posts_per_day integer not null default 1 check (posts_per_day between 1 and 10),
   primary_provider text not null default 'anthropic' check (primary_provider in ('anthropic', 'openai')),
   fallback_enabled boolean not null default false,
@@ -358,20 +360,43 @@ avoid linking to them.
 
 ---
 
-## 4. Scheduling (VPS crontab)
+## 4. Scheduling
+
+As of the in-process scheduler (`blogAi.scheduler.ts`), an external VPS
+crontab entry is **optional**, not required — the running API process
+schedules its own daily generation and review-window sweep internally:
+
+- **Daily generation** fires once at `schedule_hour:schedule_minute` UTC
+  (both admin-editable from the Auto Blog page, no restart needed — saving
+  settings re-arms the schedule immediately via `rescheduleBlogAiCron()`).
+  Gated on `auto_blog_enabled`; skipped entirely when off. On failure it
+  retries automatically — at least once, never more than 3 attempts total —
+  before giving up for the day and relying on the existing failure-alert
+  email. Every attempt forces `billingSafeOnly: true`: an unattended
+  scheduled run can only use a connected Claude/Codex subscription login,
+  never a metered API-key account, even if one is configured as a manual-run
+  fallback.
+- **Review-window sweep** runs unconditionally every 5 minutes, independent
+  of `auto_blog_enabled` — a draft already awaiting review still needs its
+  timeout handled on a day nothing new generates.
+
+`POST /run-now` remains a separate, ungated manual trigger for
+testing/on-demand use, unaffected by `auto_blog_enabled` — it does not run
+the sweep itself and may use a metered API-key account if one is configured.
+
+If you still prefer OS-level crontab (e.g. running the API as multiple
+replicas, where only one process's in-process scheduler should really fire),
+`scripts/runBlogAi.ts` still works standalone:
 
 ```
 */5 * * * * cd /path/to/backend && npm run blog-ai:cron >> /var/log/blog-ai.log 2>&1
 ```
 
-Every 5 minutes, not 15 — the cron script does two independent jobs each
-tick: (1) generate a new draft if the schedule says it's due, and (2)
-sweep any draft whose review window has expired, regardless of whether
-generation ran. A short review window (e.g. 20 minutes) needs job #2
-running often enough to actually matter.
-
-`POST /run-now` is a separate, ungated manual trigger for testing/on-demand
-use — it does not run the sweep itself.
+Don't run both against the same database — the schedule/gating logic
+differs slightly (the script's own `shouldRunNow()` heuristics vs. the
+in-process scheduler's direct settings read), and while `blog_ai_runs`'s
+"already running" check prevents an overlapping double-write, it's needless
+redundancy. Pick one.
 
 ---
 

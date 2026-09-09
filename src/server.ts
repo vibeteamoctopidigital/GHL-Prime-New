@@ -5,10 +5,21 @@ import { connectDatabase, disconnectDatabase } from './config/supabase.js'
 import { reportCloudinaryStatus } from './config/cloudinary.js'
 import logger from './shared/utils/logger.js'
 import createApp from './app.js'
+import { initBlogAiScheduler } from './modules/blog-ai/blogAi.scheduler.js'
 
 async function bootstrap(): Promise<Server> {
   await connectDatabase()
   reportCloudinaryStatus()
+
+  // Best-effort: Auto Blog's daily schedule is a non-critical background
+  // feature — a hiccup loading its settings on boot must never take down
+  // the whole API. Once running, saving settings re-arms it anyway (see
+  // blogAi.controller.ts), so a failed boot-time load is recoverable.
+  try {
+    await initBlogAiScheduler()
+  } catch (error) {
+    logger.error('Blog AI scheduler failed to initialize — Auto Blog will not run on schedule until settings are re-saved:', error)
+  }
 
   const app = createApp()
 

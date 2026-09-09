@@ -17,7 +17,11 @@ export interface BlogAiSettings {
   keywords: string
   advanced_instructions: string
   categories: string[]
+  /** Master on/off switch for the daily scheduled run — Run Now ignores this and always works regardless. */
+  auto_blog_enabled: boolean
   schedule_hour: number
+  /** Minute component of the daily schedule, alongside schedule_hour — both interpreted as UTC. */
+  schedule_minute: number
   posts_per_day: number
   primary_provider: BlogAiProvider
   fallback_enabled: boolean
@@ -46,11 +50,16 @@ export interface BlogAiSettings {
 }
 
 const DEFAULT_SETTINGS: BlogAiSettings = {
-  instructions: '',
-  keywords: '',
+  // Promoted from the settings form's own placeholder copy (AdminBlogAiPage.jsx)
+  // so a fresh install starts from a sensible baseline instead of blank text
+  // that would otherwise generate posts with zero style/keyword direction.
+  instructions: 'Write in a confident, practical tone for GoHighLevel agency owners. Favor concrete examples over theory.',
+  keywords: 'gohighlevel automation, ai agents for agencies, crm workflows',
   advanced_instructions: '',
   categories: DEFAULT_BLOG_CATEGORIES,
-  schedule_hour: 6,
+  auto_blog_enabled: true,
+  schedule_hour: 10,
+  schedule_minute: 0,
   posts_per_day: 1,
   primary_provider: 'anthropic',
   fallback_enabled: false,
@@ -119,6 +128,20 @@ class BlogAiService {
     const next: BlogAiSettings = {
       ...current,
       ...Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)),
+    }
+
+    // `optionalString` (shared across the whole app, used for genuinely
+    // nullable columns elsewhere) turns a blank textarea/input into `null` —
+    // but every string-typed column on this table is `NOT NULL DEFAULT ''`.
+    // Left unhandled, saving the form with ANY text field empty would send
+    // a real SQL NULL and fail the whole upsert with a not-null constraint
+    // violation, not just clear that one field. Coerce back to '' for any
+    // field whose default is a string.
+    const nextAsRecord = next as unknown as Record<string, unknown>
+    for (const [key, value] of Object.entries(next)) {
+      if (value === null && typeof DEFAULT_SETTINGS[key as keyof BlogAiSettings] === 'string') {
+        nextAsRecord[key] = ''
+      }
     }
 
     const { data, error } = await supabase
@@ -233,16 +256,24 @@ class BlogAiService {
    * provider. Shared by the generation engine and the AI-checker (which
    * needs an account for whichever provider did NOT write the draft), so
    * there's exactly one place that knows the rotation/cooldown rule.
+   *
+   * `opts.authType`, when given, restricts the pick to that auth type only —
+   * used by the scheduled/cron run to exclude 'api_key' (metered-billing)
+   * accounts entirely, so an automatic daily run can never rack up API
+   * charges even if an admin has an api_key account configured as a fallback
+   * for manual runs.
    */
-  async pickAvailableAccount(provider: BlogAiProvider): Promise<EngineAccount | null> {
-    const { data, error } = await supabase
+  async pickAvailableAccount(provider: BlogAiProvider, opts: { authType?: AuthType } = {}): Promise<EngineAccount | null> {
+    let query = supabase
       .from('blog_ai_accounts')
       .select('*')
       .eq('provider', provider)
       .eq('enabled', true)
       .or(`cooldown_until.is.null,cooldown_until.lt.${new Date().toISOString()}`)
-      .order('last_used_at', { ascending: true, nullsFirst: true })
-      .limit(1)
+
+    if (opts.authType) query = query.eq('auth_type', opts.authType)
+
+    const { data, error } = await query.order('last_used_at', { ascending: true, nullsFirst: true }).limit(1)
 
     if (error) throw ApiError.internal(`Could not pick a ${provider} account: ${error.message}`)
     return (data?.[0] as EngineAccount | undefined) ?? null
@@ -268,15 +299,27 @@ class BlogAiService {
    * Prefers the flat-rate/ambient path over a metered API key wherever both
    * could apply, since avoiding per-token billing is the whole point of the
    * CLI/subscription model.
+   *
+   * `billingSafeOnly` is a hard constraint, not just a preference — used by
+   * the automatic daily cron run (blogAi.scheduler.ts), which must never
+   * incur metered API charges unattended. When set: only an 'oauth'
+   * (subscription) Claude account is eligible (an 'api_key' account is
+   * skipped entirely, even if it's the only one available), and OpenAI can
+   * only resolve to the free ambient Codex login — never an api_key account.
+   * Manual runs (Run Now, the AI-checker) leave this off, matching the
+   * existing behavior admins already opted into by adding an api_key account
+   * as an explicit fallback.
    */
-  async resolveProviderRuntime(provider: BlogAiProvider): Promise<ProviderRuntime | null> {
+  async resolveProviderRuntime(provider: BlogAiProvider, opts: { billingSafeOnly?: boolean } = {}): Promise<ProviderRuntime | null> {
     if (provider === 'anthropic') {
-      const account = await this.pickAvailableAccount('anthropic')
+      const account = await this.pickAvailableAccount('anthropic', opts.billingSafeOnly ? { authType: 'oauth' } : {})
       return account ? { provider: 'anthropic', transport: 'claude-cli', account } : null
     }
 
     const codex = await this.getCodexAvailability()
     if (codex.available) return { provider: 'openai', transport: 'codex-cli' }
+
+    if (opts.billingSafeOnly) return null
 
     const account = await this.pickAvailableAccount('openai')
     return account ? { provider: 'openai', transport: 'openai-api', account } : null

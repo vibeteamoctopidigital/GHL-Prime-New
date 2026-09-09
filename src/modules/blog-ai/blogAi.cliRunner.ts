@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -119,6 +120,29 @@ function runSubprocess(command: string, args: string[], opts: { env: NodeJS.Proc
 // -- Claude Code CLI ----------------------------------------------------------
 
 /**
+ * A stable, persistent config directory for every test/run CLI call — as
+ * opposed to blogAi.ptyRunner.ts's spawnClaudeSetupToken(), which isolates
+ * the CONNECT flow in a disposable scratch dir that gets deleted once that
+ * flow finishes. Without this, buildClaudeEnv() left CLAUDE_CONFIG_DIR unset
+ * entirely, so every later call fell back to the server's real ~/.claude —
+ * a different, unrelated directory from the one the token was captured
+ * under. The token itself is a self-contained env-var credential, but
+ * Claude Code's CLI process still reads/writes local config-dir state on
+ * every invocation, and running that against a directory with no relation
+ * to the connect flow is a plausible source of "OAuth access token is
+ * invalid" on Test/Run even though Connect itself succeeded. This directory
+ * persists across calls and server restarts (never cleaned up), unlike the
+ * connect flow's scratch dirs — it needs to still be there next time.
+ */
+const CLAUDE_TEST_RUN_CONFIG_DIR = path.join(os.homedir(), '.claude-blog-ai-runtime')
+try {
+  mkdirSync(CLAUDE_TEST_RUN_CONFIG_DIR, { recursive: true })
+} catch {
+  // Best-effort — if this directory can't be created, the CLI call itself
+  // will surface a clear filesystem error rather than failing silently here.
+}
+
+/**
  * authType 'oauth' (default) uses the admin's Claude Code subscription login
  * via CLAUDE_CODE_OAUTH_TOKEN — billed against the flat-rate subscription.
  * authType 'api_key' is the opt-in advanced path for admins who want a plain
@@ -135,6 +159,7 @@ function buildClaudeEnv(token: string, authType: 'oauth' | 'api_key'): NodeJS.Pr
     childEnv['CLAUDE_CODE_OAUTH_TOKEN'] = token
     delete childEnv['ANTHROPIC_API_KEY']
   }
+  childEnv['CLAUDE_CONFIG_DIR'] = CLAUDE_TEST_RUN_CONFIG_DIR
   return childEnv
 }
 
@@ -144,6 +169,23 @@ function buildClaudeEnv(token: string, authType: 'oauth' | 'api_key'): NodeJS.Pr
 // the piped content IS the complete task, not supplementary data to review.
 const STDIN_PROMPT_INSTRUCTION =
   'Read the complete task instructions provided via stdin below and follow them exactly. Respond only as they specify — nothing else.'
+
+// The built-in Claude Code system prompt primes the model to check its
+// cross-session memory notes (auto-memory) and reach for tools as a first
+// move, regardless of `--tools ''`. With tools actually disabled, there is
+// no matching `tool_use` schema entry left for it to call, so instead of
+// silently skipping that step it narrates a fake one as plain text (e.g.
+// "Let me check memory... **Tool: bash** Parameters: ..."), which lands
+// directly in stdout ahead of the real answer and breaks JSON.parse() on
+// the write step. `--system-prompt` fully replaces the built-in prompt
+// (confirmed via `claude --help`: the per-machine "memory paths" section is
+// specific to the default prompt and is dropped once a custom one is given),
+// which removes this behavior at the source rather than trying to filter
+// its output after the fact. Kept generic enough to also apply to the
+// research call, which keeps its tools ON for web search — this only stops
+// it narrating tools it does NOT have, it doesn't block ones it does.
+const CLI_SYSTEM_PROMPT =
+  'You are completing a single one-shot automated task with no user present to respond to. Do not check memory or any prior session notes, and do not narrate or attempt to use a tool unless it is one you have actually been granted for this task. Respond with only the output the task instructions below ask for — no preamble, no commentary about your own process.'
 
 /**
  * Runs `claude ... --tools ""` non-interactively for the actual blog-post
@@ -176,7 +218,7 @@ export async function invokeClaudeCli(opts: {
   model?: string | undefined
   cliPath?: string | undefined
 }): Promise<string> {
-  const args = ['-p', STDIN_PROMPT_INSTRUCTION, '--output-format', 'text', '--tools', '', '--no-session-persistence']
+  const args = ['-p', STDIN_PROMPT_INSTRUCTION, '--output-format', 'text', '--tools', '', '--no-session-persistence', '--system-prompt', CLI_SYSTEM_PROMPT]
   if (opts.model) args.push('--model', opts.model)
 
   const stdinPayload = [
@@ -212,7 +254,7 @@ export async function researchWithClaudeCli(opts: {
   model?: string | undefined
   cliPath?: string | undefined
 }): Promise<string> {
-  const args = ['-p', STDIN_PROMPT_INSTRUCTION, '--output-format', 'text', '--no-session-persistence']
+  const args = ['-p', STDIN_PROMPT_INSTRUCTION, '--output-format', 'text', '--no-session-persistence', '--system-prompt', CLI_SYSTEM_PROMPT]
   if (opts.model) args.push('--model', opts.model)
 
   const { code, stdout, stderr } = await runSubprocess(resolveClaudeBin(opts.cliPath), args, {
@@ -234,7 +276,7 @@ export async function testClaudeCliAccount(opts: {
   model?: string | undefined
   cliPath?: string | undefined
 }): Promise<TestResult> {
-  const args = ['-p', 'Reply with the single word OK.', '--output-format', 'text', '--tools', '', '--no-session-persistence']
+  const args = ['-p', 'Reply with the single word OK.', '--output-format', 'text', '--tools', '', '--no-session-persistence', '--system-prompt', CLI_SYSTEM_PROMPT]
   if (opts.model) args.push('--model', opts.model)
 
   try {

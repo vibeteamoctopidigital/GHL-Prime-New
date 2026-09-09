@@ -5,6 +5,7 @@ import ApiError from '../../shared/utils/ApiError.js'
 import blogAiService from './blogAi.service.js'
 import blogAiDraftsService from './blogAi.drafts.service.js'
 import { runBlogAiEngine } from './blogAi.engine.js'
+import { rescheduleBlogAiCron } from './blogAi.scheduler.js'
 import { decryptToken } from '../../shared/utils/tokenCrypto.js'
 import { testOpenAiAccount, type TestResult } from './blogAi.providers.js'
 import { testClaudeCliAccount, testCodexConnection, codexLoginStatus, codexLogout } from './blogAi.cliRunner.js'
@@ -49,6 +50,10 @@ export const blogAiController: Record<string, RequestHandler> = {
 
   updateSettings: asyncHandler(async (req, res) => {
     const data = await blogAiService.saveSettings(req.body as UpdateSettingsBody)
+    // Re-arms the in-process daily schedule immediately from the saved
+    // settings — an admin changing the time/toggle on the Auto Blog page
+    // takes effect right away, no server restart needed.
+    rescheduleBlogAiCron(data)
     return sendOk(res, data, 'Auto Blog settings updated')
   }),
 

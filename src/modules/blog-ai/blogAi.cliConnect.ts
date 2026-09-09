@@ -1,4 +1,7 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import { stripAnsi } from '../../shared/utils/ansiStrip.js'
+import logger from '../../shared/utils/logger.js'
 import { createConnectSession, getConnectSession, updateConnectSession, type ConnectSession } from './blogAi.connectSessions.js'
 import {
   spawnClaudeSetupToken,
@@ -10,6 +13,46 @@ import {
   CODEX_AUTH_PATH,
 } from './blogAi.ptyRunner.js'
 import blogAiService from './blogAi.service.js'
+
+/**
+ * TEMPORARY diagnostic — two prior fixes to extractClaudeToken() (a strict
+ * sk-ant-oat pattern, then a broadened sk-ant- pattern) have both failed
+ * against a real connect attempt (401 "access token is invalid" on the
+ * saved account). Rather than guess a third regex, this logs the FULL
+ * ANSI-stripped output AND a listing of whatever `claude setup-token`
+ * actually left in its isolated CLAUDE_CONFIG_DIR scratch dir — server-side
+ * only, never exposed to the frontend — right before that directory is
+ * deleted. Check the server console after the next connect attempt; once
+ * the real shape of a successful run is known, delete this block and fix
+ * extractClaudeToken() (or switch to reading a credential file directly)
+ * against actual evidence instead of another guess.
+ */
+async function logConnectDiagnostics(scratchDir: string, strippedOutput: string): Promise<void> {
+  try {
+    logger.info(`[blog-ai connect diagnostic] Full stripped output (${strippedOutput.length} chars):\n${strippedOutput}`)
+
+    const entries = await fs.readdir(scratchDir, { withFileTypes: true }).catch(() => [])
+    logger.info(`[blog-ai connect diagnostic] Scratch dir ${scratchDir} contains: ${entries.map((e) => e.name).join(', ') || '(empty)'}`)
+
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      const filePath = path.join(scratchDir, entry.name)
+      try {
+        const stat = await fs.stat(filePath)
+        if (stat.size > 20_000) {
+          logger.info(`[blog-ai connect diagnostic] ${entry.name}: ${stat.size} bytes, skipping dump (too large)`)
+          continue
+        }
+        const content = await fs.readFile(filePath, 'utf8')
+        logger.info(`[blog-ai connect diagnostic] ${entry.name} contents:\n${content}`)
+      } catch (error) {
+        logger.info(`[blog-ai connect diagnostic] Could not read ${entry.name}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+  } catch (error) {
+    logger.warn('[blog-ai connect diagnostic] Failed to collect diagnostics:', error instanceof Error ? error.message : error)
+  }
+}
 
 /**
  * Orchestrates the two "connect from this browser" pty login flows on top
@@ -95,8 +138,11 @@ export function startClaudeConnectSession(opts: { label: string; cliPath?: strin
       })
 
       ptyProcess.onExit(({ exitCode }) => {
-        void handleClaudeExit(session.id, exitCode)
-        void cleanupScratchDir(scratchDir)
+        // Sequenced, not concurrent: diagnostics/token-extraction must read
+        // the scratch dir before cleanup deletes it, not race it.
+        void handleClaudeExit(session.id, exitCode, scratchDir).finally(() => {
+          void cleanupScratchDir(scratchDir)
+        })
       })
     })
     .catch((error: unknown) => {
@@ -109,11 +155,14 @@ export function startClaudeConnectSession(opts: { label: string; cliPath?: strin
   return session
 }
 
-async function handleClaudeExit(sessionId: string, exitCode: number): Promise<void> {
+async function handleClaudeExit(sessionId: string, exitCode: number, scratchDir: string | null): Promise<void> {
   const session = getConnectSession(sessionId)
   if (!session) return
 
-  const strippedTail = stripAnsi(session.outputBuffer).slice(-DEBUG_TAIL_CHARS)
+  const fullStrippedOutput = stripAnsi(session.outputBuffer)
+  const strippedTail = fullStrippedOutput.slice(-DEBUG_TAIL_CHARS)
+
+  if (scratchDir) await logConnectDiagnostics(scratchDir, fullStrippedOutput)
 
   if (exitCode !== 0) {
     updateConnectSession(sessionId, {

@@ -33,7 +33,11 @@ export const updateSettingsSchema = z.object({
   keywords: optionalString,
   advancedInstructions: optionalString,
   categories: z.array(z.string().trim().min(1)).min(1).optional(),
+  /** Master on/off switch for the daily scheduled run — Run Now ignores this and always works. */
+  autoBlogEnabled: booleanish.optional(),
   scheduleHour: z.coerce.number().int().min(0).max(23).optional(),
+  /** Minute component of the daily schedule, alongside scheduleHour — both interpreted as UTC. */
+  scheduleMinute: z.coerce.number().int().min(0).max(59).optional(),
   postsPerDay: z.coerce.number().int().min(1).max(10).optional(),
   primaryProvider: z.enum(BLOG_AI_PROVIDERS).optional(),
   fallbackEnabled: booleanish.optional(),
