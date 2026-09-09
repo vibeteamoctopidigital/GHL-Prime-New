@@ -36,6 +36,24 @@ const csv = (value: string): string[] =>
     .map((entry) => entry.trim())
     .filter(Boolean)
 
+/**
+ * `@anthropic-ai/claude-code` / `@openai/codex` are real project
+ * dependencies (not a global install) specifically so this backend can
+ * deploy as a single persistent service — e.g. Railway — with no separate
+ * VPS/worker needed. `npm install` puts their platform-appropriate binaries
+ * in this project's own node_modules/.bin, which is what this points at by
+ * default. (An earlier attempt bundled them for a Vercel *serverless
+ * function* instead, which doesn't work — their binaries are ~210MB/~380MB,
+ * well past Vercel's ~250MB function size limit. That's specific to
+ * Vercel's function-size ceiling, not to bundling them as dependencies in
+ * general — a normal persistent container has no such limit.) Override via
+ * the per-install claude_cli_command / codex_cli_command settings if you
+ * ever want to point at a different install instead.
+ */
+function defaultCliPath(bin: 'claude' | 'codex'): string {
+  return path.join(ROOT_DIR, 'node_modules', '.bin', bin)
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
@@ -111,13 +129,19 @@ const envSchema = z.object({
   // --- Auto Blog: CLI/subscription-based accounts (optional) -----------------
   // Server-wide default binary paths for the `claude`/`codex` CLIs, used when
   // an admin hasn't overridden them via the per-install claude_cli_command /
-  // codex_cli_command settings. Absolute paths on Linux because cron/process-
-  // manager environments there often get a minimal PATH that excludes npm
-  // global-install bin dirs — but that path obviously doesn't exist on
-  // Windows (local dev), so fall back to a bare command name there and let
-  // PATH resolve it instead of hardcoding a Unix-only path.
-  CLAUDE_CLI_PATH: z.string().optional().default(process.platform === 'win32' ? 'claude' : '/usr/bin/claude'),
-  CODEX_CLI_PATH: z.string().optional().default(process.platform === 'win32' ? 'codex' : '/usr/bin/codex'),
+  // codex_cli_command settings — see defaultCliPath() above.
+  CLAUDE_CLI_PATH: z.string().optional().default(defaultCliPath('claude')),
+  CODEX_CLI_PATH: z.string().optional().default(defaultCliPath('codex')),
+
+  // --- Auto Blog: public scheduler trigger (optional) -------------------------
+  // Shared secret for POST /blog-ai/cron/trigger — the ONE route in this app
+  // that's intentionally reachable with no admin JWT. Not required on a
+  // persistent host like Railway (the in-process poller in
+  // blogAi.scheduler.ts already handles the schedule on its own) — this
+  // exists as an optional extra/manual-test trigger reachable from outside
+  // the process. Left unset, that route always rejects with a clear message
+  // rather than the app refusing to boot.
+  BLOG_AI_CRON_SECRET: z.string().optional().default(''),
 })
 
 export type RawEnv = z.infer<typeof envSchema>

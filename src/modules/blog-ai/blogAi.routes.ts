@@ -1,9 +1,10 @@
 import { Router } from 'express'
 import authenticate from '../../shared/middleware/authenticate.js'
 import { authorizeAdmin } from '../../shared/middleware/authorize.js'
+import { cronTriggerLimiter } from '../../shared/middleware/rateLimiter.js'
 import validate from '../../shared/middleware/validate.js'
 import { idParamSchema } from '../../shared/validators/common.validators.js'
-import blogAiController from './blogAi.controller.js'
+import blogAiController, { requireCronSecret } from './blogAi.controller.js'
 import {
   createAccountSchema,
   listDraftsQuerySchema,
@@ -14,7 +15,14 @@ import {
 
 const router = Router()
 
-// Every route here manages API keys and triggers billable AI calls —
+// The ONE deliberately public route on this router — registered before the
+// admin-JWT gate below so it never reaches it. Meant for an external
+// scheduler (cron-job.org) to ping every few minutes; see requireCronSecret
+// in blogAi.controller.ts and blogAi.scheduler.ts's runDueBlogAiTasks() for
+// why this exists (Vercel has no persistent process to hold its own timer).
+router.post('/cron/trigger', cronTriggerLimiter, requireCronSecret, blogAiController.cronTrigger!)
+
+// Every route below manages API keys and triggers billable AI calls —
 // admin-only end to end, unlike blog/case-studies there is no public read side.
 router.use(authenticate, authorizeAdmin)
 

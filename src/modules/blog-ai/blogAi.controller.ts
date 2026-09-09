@@ -1,11 +1,13 @@
 import type { RequestHandler } from 'express'
+import { timingSafeEqual } from 'node:crypto'
 import asyncHandler from '../../shared/utils/asyncHandler.js'
 import { sendCreated, sendOk } from '../../shared/utils/ApiResponse.js'
 import ApiError from '../../shared/utils/ApiError.js'
+import env from '../../config/env.js'
 import blogAiService from './blogAi.service.js'
 import blogAiDraftsService from './blogAi.drafts.service.js'
 import { runBlogAiEngine } from './blogAi.engine.js'
-import { rescheduleBlogAiCron } from './blogAi.scheduler.js'
+import { runDueBlogAiTasks } from './blogAi.scheduler.js'
 import { decryptToken } from '../../shared/utils/tokenCrypto.js'
 import { testOpenAiAccount, type TestResult } from './blogAi.providers.js'
 import { testClaudeCliAccount, testCodexConnection, codexLoginStatus, codexLogout } from './blogAi.cliRunner.js'
@@ -42,6 +44,32 @@ async function testAccountById(id: string): Promise<TestResult> {
   return testOpenAiAccount({ apiKey: token, model })
 }
 
+/**
+ * Guards POST /blog-ai/cron/trigger — the one route in this app that's
+ * deliberately reachable with no admin JWT, since an external scheduler
+ * (cron-job.org) can't hold a session. Accepts the secret as either
+ * `?secret=` (simplest to configure on a cron pinger that just hits a URL)
+ * or `Authorization: Bearer <secret>`. Compared with timingSafeEqual rather
+ * than `===` so a wrong guess can't be narrowed down via response-time
+ * differences. An unconfigured BLOG_AI_CRON_SECRET always rejects — this
+ * route is opt-in, not on-by-default.
+ */
+export const requireCronSecret: RequestHandler = (req, _res, next) => {
+  const configured = env.BLOG_AI_CRON_SECRET
+  if (!configured) throw ApiError.unauthorized('BLOG_AI_CRON_SECRET is not configured')
+
+  const authHeader = req.get('authorization') || ''
+  const bearerMatch = /^Bearer\s+(.+)$/i.exec(authHeader)
+  const provided = String((req.query as { secret?: string } | undefined)?.secret || bearerMatch?.[1] || '')
+
+  const providedBuf = Buffer.from(provided)
+  const configuredBuf = Buffer.from(configured)
+  const matches = providedBuf.length === configuredBuf.length && timingSafeEqual(providedBuf, configuredBuf)
+
+  if (!matches) throw ApiError.unauthorized('Invalid or missing cron secret')
+  next()
+}
+
 export const blogAiController: Record<string, RequestHandler> = {
   getSettings: asyncHandler(async (_req, res) => {
     const data = await blogAiService.getSettings()
@@ -49,11 +77,11 @@ export const blogAiController: Record<string, RequestHandler> = {
   }),
 
   updateSettings: asyncHandler(async (req, res) => {
+    // No re-arming needed: the scheduler re-reads settings fresh on every
+    // poll/trigger (see blogAi.scheduler.ts's runDueBlogAiTasks()), so a
+    // saved change just takes effect on the next tick — no in-process
+    // timer state depends on what was saved before.
     const data = await blogAiService.saveSettings(req.body as UpdateSettingsBody)
-    // Re-arms the in-process daily schedule immediately from the saved
-    // settings — an admin changing the time/toggle on the Auto Blog page
-    // takes effect right away, no server restart needed.
-    rescheduleBlogAiCron(data)
     return sendOk(res, data, 'Auto Blog settings updated')
   }),
 
@@ -112,6 +140,17 @@ export const blogAiController: Record<string, RequestHandler> = {
     const result = await runBlogAiEngine()
     if (!result.started) throw ApiError.conflict(result.reason ?? 'A run is already in progress')
     return sendOk(res, result, result.success ? 'Blog draft generated — awaiting review' : 'Blog AI run failed')
+  }),
+
+  // Public (secret-protected, not JWT-gated — see requireCronSecret in
+  // blogAi.routes.ts) — meant to be pinged by an external scheduler like
+  // cron-job.org every few minutes, since Vercel has no persistent process
+  // to hold its own timer. Safe to call far more often than the schedule
+  // actually needs: runDueBlogAiTasks() is a stateless no-op most of the
+  // time (see blogAi.scheduler.ts).
+  cronTrigger: asyncHandler(async (_req, res) => {
+    const result = await runDueBlogAiTasks()
+    return sendOk(res, result, 'Blog AI cron check complete')
   }),
 
   listRuns: asyncHandler(async (req, res) => {
