@@ -1,11 +1,11 @@
-import supabase from '../../config/supabase.js'
+import prisma from '../../config/prisma.js'
 import BaseService from '../../shared/services/BaseService.js'
 import { buildUniqueSlug } from '../../shared/utils/slug.js'
 import ApiError from '../../shared/utils/ApiError.js'
 import type { SerializedRow } from '../../types/common.js'
 
 /** Mirrors the old Supabase embed: assigned_team_members -> team_member. */
-const CASE_STUDY_SELECT = '*, assigned_team_members:case_study_team_members(*, team_member:team_members(*))'
+const CASE_STUDY_INCLUDE = { assigned_team_members: { include: { team_member: true } } }
 
 export interface CaseStudyListOptions {
   category?: string | undefined
@@ -15,10 +15,10 @@ export interface CaseStudyListOptions {
 class CaseStudyService extends BaseService {
   constructor() {
     super({
-      table: 'case_studies',
+      model: prisma.caseStudy,
       resourceName: 'Case study',
       defaultOrderBy: [{ column: 'created_at', ascending: false }],
-      select: CASE_STUDY_SELECT,
+      include: CASE_STUDY_INCLUDE,
       searchableFields: ['title', 'category', 'excerpt', 'subtitle'],
     })
   }
@@ -44,28 +44,29 @@ class CaseStudyService extends BaseService {
   }
 
   /**
-   * Replaces the study's team assignments.
-   *
-   * Delete-then-insert; PostgREST cannot wrap the pair in a transaction, so a
-   * failure between them leaves the study with no credits rather than
-   * duplicates — visible and correctable.
+   * Replaces the study's team assignments as one real transaction — an
+   * upgrade from the previous delete-then-insert pair, which PostgREST
+   * couldn't wrap atomically. A failure now can't leave the study with no
+   * credits at all; it either fully replaces the assignments or changes
+   * nothing.
    */
   async syncTeamAssignments(caseStudyId: string, teamMemberIds: string[] = []): Promise<number> {
-    const { error: deleteError } = await supabase
-      .from('case_study_team_members')
-      .delete()
-      .eq('case_study_id', caseStudyId)
-
-    if (deleteError) throw ApiError.internal(`Could not clear team assignments: ${deleteError.message}`)
-
     const uniqueIds = [...new Set(teamMemberIds.filter(Boolean))]
-    if (uniqueIds.length === 0) return 0
 
-    const { error } = await supabase
-      .from('case_study_team_members')
-      .insert(uniqueIds.map((teamMemberId) => ({ case_study_id: caseStudyId, team_member_id: teamMemberId })))
-
-    if (error) throw ApiError.internal(`Could not assign team members: ${error.message}`)
+    try {
+      await prisma.$transaction([
+        prisma.caseStudyTeamMember.deleteMany({ where: { case_study_id: caseStudyId } }),
+        ...(uniqueIds.length > 0
+          ? [
+              prisma.caseStudyTeamMember.createMany({
+                data: uniqueIds.map((teamMemberId) => ({ case_study_id: caseStudyId, team_member_id: teamMemberId })),
+              }),
+            ]
+          : []),
+      ])
+    } catch (error) {
+      throw ApiError.internal(`Could not sync team assignments: ${error instanceof Error ? error.message : String(error)}`)
+    }
 
     return uniqueIds.length
   }
@@ -99,13 +100,14 @@ class CaseStudyService extends BaseService {
 
   /** Distinct categories with a count — powers the case-study filter bar. */
   async listCategories(): Promise<{ category: string; count: number }[]> {
-    const { data, error } = await supabase.from('case_studies').select('category').eq('published', true)
-    if (error) throw ApiError.internal(`Could not load categories: ${error.message}`)
+    const rows: { category: string }[] = await prisma.caseStudy.findMany({
+      where: { published: true },
+      select: { category: true },
+    })
 
     const counts = new Map<string, number>()
-    for (const row of data ?? []) {
-      const category = (row as { category: string }).category
-      if (category) counts.set(category, (counts.get(category) ?? 0) + 1)
+    for (const row of rows) {
+      if (row.category) counts.set(row.category, (counts.get(row.category) ?? 0) + 1)
     }
 
     return [...counts.entries()]
@@ -115,14 +117,13 @@ class CaseStudyService extends BaseService {
 
   /** Slug + updated_at for every published study — used to build the sitemap. */
   async listPublishedSlugs(): Promise<{ slug: string; updated_at: string }[]> {
-    const { data, error } = await supabase
-      .from('case_studies')
-      .select('slug, updated_at')
-      .eq('published', true)
-      .order('created_at', { ascending: false })
+    const rows: { slug: string; updated_at: Date }[] = await prisma.caseStudy.findMany({
+      where: { published: true },
+      select: { slug: true, updated_at: true },
+      orderBy: { created_at: 'desc' },
+    })
 
-    if (error) throw ApiError.internal(`Could not load case study slugs: ${error.message}`)
-    return (data ?? []) as { slug: string; updated_at: string }[]
+    return rows.map((row) => ({ slug: row.slug, updated_at: row.updated_at.toISOString() }))
   }
 }
 

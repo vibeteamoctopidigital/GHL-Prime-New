@@ -1,7 +1,7 @@
 import type { Server } from 'node:http'
 import env from './config/env.js'
 import { API_PREFIX } from './config/constants.js'
-import { connectDatabase, disconnectDatabase } from './config/supabase.js'
+import { connectDatabase, disconnectDatabase } from './config/prisma.js'
 import { reportCloudinaryStatus } from './config/cloudinary.js'
 import logger from './shared/utils/logger.js'
 import createApp from './app.js'

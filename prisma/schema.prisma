@@ -1,0 +1,462 @@
+// Hand-written from sql-tabel.sql (the live schema, as exported by the
+// user) rather than `prisma db pull` — introspection was deliberately not
+// run against the live database this session. Field names are kept
+// IDENTICAL to the real snake_case column names (not camelCased) so the
+// Prisma Client returns rows shaped exactly like the PostgREST rows the
+// rest of the app already expects — no output-transform layer needed,
+// same as the comment in BaseService.ts already documented before this
+// migration ("rows already arrive snake_case").
+//
+// Relation field names (e.g. `team_member`, `user`, `blog_post`) are chosen
+// to match the exact PostgREST embed aliases the current code already uses
+// (e.g. `team_member:team_members(*)`), so query rewrites need minimal
+// reshaping.
+//
+// This should be verified against the real database with `prisma db pull`
+// (or `prisma validate` / a dry compare) before relying on it in
+// production — sql-tabel.sql's own header warns it "may not be valid for
+// execution."
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  WON
+  LOST
+  ARCHIVED
+}
+
+model CaseStudy {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug       String   @unique
+  title      String
+  category   String
+  subtitle   String?
+  challenge  String?
+  solution   String?
+  outcome    String?
+  excerpt    String?
+  image      String?
+  accent     String?  @default("emerald")
+  body       Json     @default("[]")
+  featured   Boolean  @default(false)
+  published  Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  assigned_team_members CaseStudyTeamMember[]
+
+  @@map("case_studies")
+}
+
+model TeamMember {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String
+  role           String
+  description    String?
+  image_url      String?
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime @default(now()) @db.Timestamptz(6)
+  sort_order     Int      @default(999)
+  linkedin_url   String?
+  facebook_url   String?
+  instagram_url  String?
+  twitter_url    String?
+  upwork_url     String?
+  website_url    String?
+
+  case_study_assignments CaseStudyTeamMember[]
+
+  @@map("team_members")
+}
+
+model CaseStudyTeamMember {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  case_study_id  String   @db.Uuid
+  team_member_id String   @db.Uuid
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  case_study  CaseStudy  @relation(fields: [case_study_id], references: [id])
+  team_member TeamMember @relation(fields: [team_member_id], references: [id])
+
+  @@map("case_study_team_members")
+}
+
+model TeamPageMember {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String
+  title      String
+  image_url  String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  sort_order Int      @default(999)
+  published  Boolean  @default(true)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("team_page_members")
+}
+
+model MeetingGallery {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title      String?
+  image_url  String
+  sort_order Int      @default(999)
+  published  Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("meeting_gallery")
+}
+
+model TechnologyLogo {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String
+  image_url  String
+  sort_order Int      @default(999)
+  published  Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("technology_logos")
+}
+
+model PartnerLogo {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_name    String
+  logo_image_url  String?
+  website_url     String?
+  sort_order      Int?     @default(1)
+  published       Boolean  @default(true)
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime @default(now()) @db.Timestamptz(6)
+  image_url       String?
+  name            String?
+
+  @@map("partner_logos")
+}
+
+model BlogPost {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug             String    @unique
+  title            String
+  category         String
+  tags             String[]  @default([])
+  author           String?   @default("GHL Prime Team")
+  excerpt          String?
+  cover_image      String?
+  reading_time     Int?
+  content          String?
+  seo_title        String?
+  seo_description  String?
+  seo_keywords     String?
+  featured         Boolean   @default(false)
+  published        Boolean   @default(false)
+  published_at     DateTime? @db.Timestamptz(6)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime  @default(now()) @db.Timestamptz(6)
+
+  ai_runs   BlogAiRun[]
+  ai_drafts BlogAiDraft[]
+
+  @@map("blog_posts")
+}
+
+model ShowcaseItem {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  origin_name           String
+  origin_url            String?
+  origin_icon           String?
+  origin_description    String?
+  origin_tagline        String?
+  adaptation_badge      String?  @default("Enterprise Adaptation")
+  adaptation_name       String
+  adaptation_description String?
+  adaptation_tags       Json     @default("[]")
+  sort_order            Int      @default(999)
+  published             Boolean  @default(true)
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime @default(now()) @db.Timestamptz(6)
+
+  placements ShowcasePlacement[]
+
+  @@map("showcase_items")
+}
+
+model ShowcaseStat {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  value      String
+  label      String
+  sort_order Int      @default(999)
+  published  Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("showcase_stats")
+}
+
+model ShowcasePlacement {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  item_id    String   @db.Uuid
+  page_key   String
+  sort_order Int      @default(999)
+  enabled    Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  item ShowcaseItem @relation(fields: [item_id], references: [id])
+
+  @@map("showcase_placements")
+}
+
+model GalleryCategory {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String
+  slug       String   @unique
+  sort_order Int      @default(999)
+  published  Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  images GalleryImage[]
+
+  @@map("gallery_categories")
+}
+
+model GalleryImage {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title       String?
+  image_url   String
+  category_id String?  @db.Uuid
+  sort_order  Int      @default(999)
+  published   Boolean  @default(true)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  category GalleryCategory? @relation(fields: [category_id], references: [id])
+
+  @@map("gallery_images")
+}
+
+model User {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email          String
+  password_hash  String
+  full_name      String?
+  role           UserRole  @default(EDITOR)
+  is_active      Boolean   @default(true)
+  last_login_at  DateTime? @db.Timestamptz(6)
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime  @default(now()) @db.Timestamptz(6)
+
+  refresh_tokens  RefreshToken[]
+  uploaded_media  MediaAsset[]
+  reviewed_drafts BlogAiDraft[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  token_hash  String
+  user_id     String    @db.Uuid
+  expires_at  DateTime  @db.Timestamptz(6)
+  revoked_at  DateTime? @db.Timestamptz(6)
+  user_agent  String?
+  ip_address  String?
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [user_id], references: [id])
+
+  @@map("refresh_tokens")
+}
+
+model ContactLead {
+  id                 String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  full_name          String?
+  email              String?
+  phone              String?
+  company            String?
+  message            String?
+  source             String?
+  country            String?
+  role               String?
+  ghl_situation      String?
+  client_volume      String?
+  monthly_budget     String?
+  timeline           String?
+  biggest_challenge  String?
+  page_url           String?
+  status             LeadStatus @default(NEW)
+  notes              String?
+  submitted_at       DateTime   @default(now()) @db.Timestamptz(6)
+  created_at         DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime   @default(now()) @db.Timestamptz(6)
+
+  @@map("contact_leads")
+}
+
+model ServiceSurvey {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String?
+  email         String?
+  phone         String?
+  business      String?
+  service       String?
+  source        String?
+  role          String?
+  business_type String?
+  stage         String?
+  app_type      String?
+  needs         String?
+  budget        String?
+  sub_accounts  String?
+  lead_volume   String?
+  coverage      String?
+  details       String?
+  page_url      String?
+  status        LeadStatus @default(NEW)
+  notes         String?
+  submitted_at  DateTime   @default(now()) @db.Timestamptz(6)
+  created_at    DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime   @default(now()) @db.Timestamptz(6)
+
+  @@map("service_surveys")
+}
+
+model MediaAsset {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  public_id         String   @unique
+  url               String
+  secure_url        String
+  format            String?
+  resource_type     String?
+  width             Int?
+  height            Int?
+  bytes             Int?
+  folder            String?
+  original_filename String?
+  alt               String?
+  tags              String[] @default([])
+  uploaded_by_id    String?  @db.Uuid
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @db.Timestamptz(6)
+
+  uploaded_by User? @relation(fields: [uploaded_by_id], references: [id])
+
+  @@map("media_assets")
+}
+
+model BlogAiSettings {
+  id                          Boolean  @id @default(true)
+  instructions                String   @default("")
+  keywords                    String   @default("")
+  advanced_instructions       String   @default("")
+  categories                  String[] @default(["GoHighLevel", "Automation", "AI Agents", "Case Studies", "Voice AI", "CRM", "Vibe Coding"])
+  schedule_hour               Int      @default(6)
+  posts_per_day               Int      @default(1)
+  primary_provider            String   @default("anthropic")
+  fallback_enabled            Boolean  @default(false)
+  anthropic_model             String   @default("")
+  openai_model                String   @default("")
+  updated_at                  DateTime @default(now()) @db.Timestamptz(6)
+  style_rules                 String   @default("Do not use em dashes. Write short, clear sentences aimed at a general reader. Avoid jargon. Prefer active voice.")
+  topic_focus_areas           String[] @default(["AI automation", "CRM", "GoHighLevel", "Web Development"])
+  review_window_minutes       Int      @default(20)
+  image_generation_enabled    Boolean  @default(true)
+  web_search_enabled          Boolean  @default(true)
+  min_seo_score                Int     @default(70)
+  competitor_domains          String[] @default([])
+  max_internal_links          Int      @default(3)
+  blog_url_path               String   @default("/blog")
+  claude_cli_command          String?
+  codex_cli_command           String?
+  codex_enabled               Boolean  @default(false)
+  placeholder_cover_image_url String   @default("")
+  auto_blog_enabled           Boolean  @default(true)
+  schedule_minute             Int      @default(0)
+
+  @@map("blog_ai_settings")
+}
+
+model BlogAiAccount {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider        String
+  label           String
+  token           String
+  token_preview   String
+  model           String?
+  enabled         Boolean   @default(true)
+  status          String    @default("idle")
+  cooldown_until  DateTime? @db.Timestamptz(6)
+  done_count      Int       @default(0)
+  failed_count    Int       @default(0)
+  last_used_at    DateTime? @db.Timestamptz(6)
+  last_error      String?
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  auth_type       String    @default("oauth")
+
+  @@map("blog_ai_accounts")
+}
+
+model BlogAiRun {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  status        String
+  provider      String?
+  account_label String?
+  blog_post_id  String?   @db.Uuid
+  error         String?
+  started_at    DateTime  @default(now()) @db.Timestamptz(6)
+  finished_at   DateTime? @db.Timestamptz(6)
+  alerted_at    DateTime? @db.Timestamptz(6)
+  current_step  String?
+
+  blog_post BlogPost?     @relation(fields: [blog_post_id], references: [id])
+  drafts    BlogAiDraft[]
+
+  @@map("blog_ai_runs")
+}
+
+model BlogAiDraft {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  run_id           String?   @db.Uuid
+  provider         String
+  title            String
+  slug             String
+  category         String
+  primary_keyword  String?
+  tags             String[]  @default([])
+  excerpt          String    @default("")
+  content          String
+  seo_title        String    @default("")
+  seo_description  String    @default("")
+  seo_keywords     String    @default("")
+  reading_time     Int?
+  cover_image      String?
+  cover_image_alt  String?
+  topic_research   Json?
+  status           String    @default("pending_review")
+  review_deadline  DateTime  @db.Timestamptz(6)
+  reviewed_by      String?   @db.Uuid
+  reviewed_at      DateTime? @db.Timestamptz(6)
+  checker_result   Json?
+  blog_post_id     String?   @db.Uuid
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+
+  run              BlogAiRun? @relation(fields: [run_id], references: [id])
+  reviewed_by_user User?      @relation(fields: [reviewed_by], references: [id])
+  blog_post        BlogPost?  @relation(fields: [blog_post_id], references: [id])
+
+  @@map("blog_ai_drafts")
+}

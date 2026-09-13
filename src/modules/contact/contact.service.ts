@@ -1,4 +1,5 @@
 import env from '../../config/env.js'
+import prisma from '../../config/prisma.js'
 import LeadService from '../../shared/services/LeadService.js'
 import logger from '../../shared/utils/logger.js'
 import type { SerializedRow } from '../../types/common.js'
@@ -12,7 +13,7 @@ export interface SpamOutcome {
 class ContactService extends LeadService {
   constructor() {
     super({
-      table: 'contact_leads',
+      model: prisma.contactLead,
       resourceName: 'Contact lead',
       webhookUrl: env.CONTACT_WEBHOOK_URL,
       searchableFields: ['full_name', 'email', 'company', 'message'],

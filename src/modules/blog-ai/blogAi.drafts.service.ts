@@ -1,35 +1,31 @@
-import supabase from '../../config/supabase.js'
+import prisma from '../../config/prisma.js'
 import ApiError from '../../shared/utils/ApiError.js'
 import blogService from '../blog/blog.service.js'
 import type { CheckerResult, DraftStatus } from './blogAi.validators.js'
 import type { SerializedRow } from '../../types/common.js'
 
-
-
 const PUBLISHABLE_STATUSES: DraftStatus[] = ['pending_review', 'checker_failed']
+
+/** True for Prisma's "record to update not found" error (P2025). */
+const isPrismaNotFound = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && (error as { code: unknown }).code === 'P2025'
 
 class BlogAiDraftsService {
   async list(status?: DraftStatus, limit = 50): Promise<SerializedRow[]> {
-    let query = supabase
-      .from('blog_ai_drafts')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(limit)
+    const rows = await prisma.blogAiDraft.findMany({
+      where: status ? { status } : {},
+      orderBy: { created_at: 'desc' },
+      take: limit,
+    })
 
-    if (status) query = query.eq('status', status)
-
-    const { data, error } = await query
-    if (error) throw ApiError.internal(`Could not list drafts: ${error.message}`)
-    return (data ?? []) as unknown as SerializedRow[]
+    return rows as unknown as SerializedRow[]
   }
 
   async findOrFail(id: string): Promise<SerializedRow> {
-    const { data, error } = await supabase.from('blog_ai_drafts').select('*').eq('id', id).maybeSingle()
-    if (error) throw ApiError.internal(`Could not load draft: ${error.message}`)
-    if (!data) throw ApiError.notFound('Draft not found')
-    return data as unknown as SerializedRow
+    const row = await prisma.blogAiDraft.findUnique({ where: { id } })
+    if (!row) throw ApiError.notFound('Draft not found')
+    return row as unknown as SerializedRow
   }
-
 
   async publishDraft(draft: SerializedRow, reviewedBy: string | null = null): Promise<SerializedRow> {
     const post = await blogService.create({
@@ -49,25 +45,26 @@ class BlogAiDraftsService {
       published: true,
     })
 
-    const { data: updated, error } = await supabase
-      .from('blog_ai_drafts')
-      .update({
-        status: 'published',
-        blog_post_id: post['id'],
-        reviewed_by: reviewedBy,
-        reviewed_at: reviewedBy ? new Date().toISOString() : (draft['reviewed_at'] ?? null),
-      })
-      .eq('id', draft['id'])
-      .select('*')
-      .single()
-
-    if (error) throw ApiError.internal(`Post was created but the draft record could not be updated: ${error.message}`)
-
-    if (draft['run_id']) {
-      await supabase.from('blog_ai_runs').update({ blog_post_id: post['id'] }).eq('id', draft['run_id'] as string)
+    let updated: SerializedRow
+    try {
+      updated = (await prisma.blogAiDraft.update({
+        where: { id: draft['id'] as string },
+        data: {
+          status: 'published',
+          blog_post_id: post['id'] as string,
+          reviewed_by: reviewedBy,
+          reviewed_at: reviewedBy ? new Date() : ((draft['reviewed_at'] as Date | null) ?? null),
+        },
+      })) as unknown as SerializedRow
+    } catch (error) {
+      throw ApiError.internal(`Post was created but the draft record could not be updated: ${error instanceof Error ? error.message : String(error)}`)
     }
 
-    return updated as unknown as SerializedRow
+    if (draft['run_id']) {
+      await prisma.blogAiRun.update({ where: { id: draft['run_id'] as string }, data: { blog_post_id: post['id'] as string } })
+    }
+
+    return updated
   }
 
   async approveDraft(id: string, adminUserId: string): Promise<SerializedRow> {
@@ -85,27 +82,24 @@ class BlogAiDraftsService {
       throw ApiError.conflict(`Draft cannot be rejected from status "${String(draft['status'])}"`)
     }
 
-    const { data, error } = await supabase
-      .from('blog_ai_drafts')
-      .update({ status: 'rejected', reviewed_by: adminUserId, reviewed_at: new Date().toISOString() })
-      .eq('id', id)
-      .select('*')
-      .single()
-
-    if (error) throw ApiError.internal(`Could not reject draft: ${error.message}`)
-    return data as unknown as SerializedRow
+    try {
+      const updated = await prisma.blogAiDraft.update({
+        where: { id },
+        data: { status: 'rejected', reviewed_by: adminUserId, reviewed_at: new Date() },
+      })
+      return updated as unknown as SerializedRow
+    } catch (error) {
+      throw ApiError.internal(`Could not reject draft: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   /** Drafts whose review window has passed with no admin action yet. */
   async listExpiredPendingDrafts(): Promise<SerializedRow[]> {
-    const { data, error } = await supabase
-      .from('blog_ai_drafts')
-      .select('*')
-      .eq('status', 'pending_review')
-      .lt('review_deadline', new Date().toISOString())
+    const rows = await prisma.blogAiDraft.findMany({
+      where: { status: 'pending_review', review_deadline: { lt: new Date() } },
+    })
 
-    if (error) throw ApiError.internal(`Could not list expired drafts: ${error.message}`)
-    return (data ?? []) as unknown as SerializedRow[]
+    return rows as unknown as SerializedRow[]
   }
 
   /**
@@ -113,27 +107,35 @@ class BlogAiDraftsService {
    * status in the same query — returns null if something else already
    * claimed it (e.g. an overlapping sweep run), so the checker never
    * double-processes the same draft.
+   *
+   * Prisma's `update()` requires a unique `where` (just `id` here), so the
+   * status condition can't ride along in the same call the way PostgREST's
+   * `.eq('status', ...)` did — `updateMany()` (which allows any `where`)
+   * plus checking its `count` preserves the same atomicity: the UPDATE...WHERE
+   * still runs as one statement at the database level, so a concurrent sweep
+   * can still only ever win this race once.
    */
   async claimForChecking(id: string): Promise<SerializedRow | null> {
-    const { data, error } = await supabase
-      .from('blog_ai_drafts')
-      .update({ status: 'checking' })
-      .eq('id', id)
-      .eq('status', 'pending_review')
-      .select('*')
-      .maybeSingle()
+    const { count } = await prisma.blogAiDraft.updateMany({
+      where: { id, status: 'pending_review' },
+      data: { status: 'checking' },
+    })
 
-    if (error) throw ApiError.internal(`Could not claim draft for checking: ${error.message}`)
-    return data as unknown as SerializedRow | null
+    if (count === 0) return null
+    return this.findOrFail(id)
   }
 
   async markCheckerFailed(id: string, outcome: { result?: CheckerResult; skippedReason?: string }): Promise<void> {
-    const { error } = await supabase
-      .from('blog_ai_drafts')
-      .update({ status: 'checker_failed', checker_result: outcome.result ?? { reason: outcome.skippedReason } })
-      .eq('id', id)
-
-    if (error) throw ApiError.internal(`Could not mark draft as checker_failed: ${error.message}`)
+    try {
+      await prisma.blogAiDraft.update({
+        where: { id },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- CheckerResult / {reason} are plain JSON-serializable objects, matching the `Json` column.
+        data: { status: 'checker_failed', checker_result: (outcome.result ?? { reason: outcome.skippedReason }) as any },
+      })
+    } catch (error) {
+      if (isPrismaNotFound(error)) return
+      throw ApiError.internal(`Could not mark draft as checker_failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 }
 

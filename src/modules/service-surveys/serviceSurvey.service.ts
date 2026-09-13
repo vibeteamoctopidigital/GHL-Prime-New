@@ -1,4 +1,5 @@
 import env from '../../config/env.js'
+import prisma from '../../config/prisma.js'
 import LeadService from '../../shared/services/LeadService.js'
 import logger from '../../shared/utils/logger.js'
 import type { SerializedRow } from '../../types/common.js'
@@ -17,7 +18,7 @@ export interface SpamOutcome {
 class ServiceSurveyService extends LeadService {
   constructor() {
     super({
-      table: 'service_surveys',
+      model: prisma.serviceSurvey,
       resourceName: 'Service survey',
       // Falls back to the contact webhook, which is where these already went.
       webhookUrl: env.SURVEY_WEBHOOK_URL || env.CONTACT_WEBHOOK_URL,
@@ -82,7 +83,7 @@ class ServiceSurveyService extends LeadService {
 
   /** Submission counts per service page — which pages actually convert. */
   async countsByService(): Promise<{ service: string; count: number }[]> {
-    const rows = await this.list({ select: 'service' })
+    const rows = await this.list({ select: ['service'] })
 
     const counts = new Map<string, number>()
     for (const row of rows) {

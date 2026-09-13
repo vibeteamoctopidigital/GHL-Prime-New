@@ -1,3 +1,4 @@
+import prisma from '../../config/prisma.js'
 import SortableService from '../../shared/services/SortableService.js'
 import { buildUniqueSlug } from '../../shared/utils/slug.js'
 import type { SerializedRow } from '../../types/common.js'
@@ -5,7 +6,7 @@ import type { SerializedRow } from '../../types/common.js'
 class GalleryCategoryService extends SortableService {
   constructor() {
     super({
-      table: 'gallery_categories',
+      model: prisma.galleryCategory,
       resourceName: 'Gallery category',
       searchableFields: ['name', 'slug'],
     })
@@ -41,7 +42,7 @@ class GalleryCategoryService extends SortableService {
 class GalleryImageService extends SortableService {
   constructor() {
     super({
-      table: 'gallery_images',
+      model: prisma.galleryImage,
       resourceName: 'Gallery image',
       searchableFields: ['title'],
     })

@@ -1,5 +1,5 @@
 import cron from 'node-cron'
-import supabase from '../../config/supabase.js'
+import prisma from '../../config/prisma.js'
 import logger from '../../shared/utils/logger.js'
 import blogAiService from './blogAi.service.js'
 import { runBlogAiEngine } from './blogAi.engine.js'
@@ -42,18 +42,13 @@ function todaysScheduledMoment(scheduleHour: number, scheduleMinute: number): Da
 
 /** Mirrors the "already met today's target" gate scripts/runBlogAi.ts applies for the OS-cron path. */
 async function todaysTargetAlreadyMet(postsPerDay: number): Promise<boolean> {
-  const { count, error } = await supabase
-    .from('blog_ai_runs')
-    .select('id', { count: 'exact', head: true })
-    .eq('status', 'success')
-    .gte('started_at', startOfUtcDay().toISOString())
-
-  if (error) {
-    logger.error("Blog AI scheduler: could not check today's run count — proceeding anyway:", error.message)
+  try {
+    const count = await prisma.blogAiRun.count({ where: { status: 'success', started_at: { gte: startOfUtcDay() } } })
+    return count >= postsPerDay
+  } catch (error) {
+    logger.error("Blog AI scheduler: could not check today's run count — proceeding anyway:", error instanceof Error ? error.message : error)
     return false
   }
-
-  return (count ?? 0) >= postsPerDay
 }
 
 /**
@@ -63,18 +58,12 @@ async function todaysTargetAlreadyMet(postsPerDay: number): Promise<boolean> {
  * attempt budget.
  */
 async function failedAttemptsSinceScheduledMoment(scheduledMoment: Date): Promise<number> {
-  const { count, error } = await supabase
-    .from('blog_ai_runs')
-    .select('id', { count: 'exact', head: true })
-    .eq('status', 'failed')
-    .gte('started_at', scheduledMoment.toISOString())
-
-  if (error) {
-    logger.error('Blog AI scheduler: could not check failed-attempt count — proceeding anyway:', error.message)
+  try {
+    return await prisma.blogAiRun.count({ where: { status: 'failed', started_at: { gte: scheduledMoment } } })
+  } catch (error) {
+    logger.error('Blog AI scheduler: could not check failed-attempt count — proceeding anyway:', error instanceof Error ? error.message : error)
     return 0
   }
-
-  return count ?? 0
 }
 
 export type BlogAiSchedulerOutcome =

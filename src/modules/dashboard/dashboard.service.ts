@@ -1,4 +1,5 @@
-import supabase from '../../config/supabase.js'
+import prisma from '../../config/prisma.js'
+import type { PrismaModelDelegate } from '../../shared/services/BaseService.js'
 
 export interface ContentCounts {
   case_studies: { total: number; published: number; drafts: number }
@@ -23,13 +24,45 @@ export interface RecentActivity {
   service_surveys: Record<string, unknown>[]
 }
 
-/** `head: true` returns only the count — no rows cross the wire. */
-async function countRows(table: string, filter?: { column: string; value: unknown }): Promise<number> {
-  let query = supabase.from(table).select('id', { count: 'exact', head: true })
-  if (filter) query = query.eq(filter.column, filter.value as never)
+/**
+ * The same table-name -> Prisma-model-delegate mapping every BaseService
+ * subclass sets up individually via its `model:` constructor option — this
+ * service works across many tables dynamically instead, so it needs its own
+ * copy of that lookup rather than one fixed delegate.
+ */
+type TableName =
+  | 'case_studies'
+  | 'blog_posts'
+  | 'team_members'
+  | 'team_page_members'
+  | 'gallery_categories'
+  | 'gallery_images'
+  | 'meeting_gallery'
+  | 'partner_logos'
+  | 'technology_logos'
+  | 'showcase_items'
+  | 'showcase_stats'
+  | 'contact_leads'
+  | 'service_surveys'
 
-  const { count } = await query
-  return count ?? 0
+const MODELS: Record<TableName, PrismaModelDelegate> = {
+  case_studies: prisma.caseStudy,
+  blog_posts: prisma.blogPost,
+  team_members: prisma.teamMember,
+  team_page_members: prisma.teamPageMember,
+  gallery_categories: prisma.galleryCategory,
+  gallery_images: prisma.galleryImage,
+  meeting_gallery: prisma.meetingGallery,
+  partner_logos: prisma.partnerLogo,
+  technology_logos: prisma.technologyLogo,
+  showcase_items: prisma.showcaseItem,
+  showcase_stats: prisma.showcaseStat,
+  contact_leads: prisma.contactLead,
+  service_surveys: prisma.serviceSurvey,
+}
+
+async function countRows(table: TableName, filter?: { column: string; value: unknown }): Promise<number> {
+  return MODELS[table].count({ where: filter ? { [filter.column]: filter.value } : {} })
 }
 
 /**
@@ -99,21 +132,21 @@ class DashboardService {
 
   /** The most recently touched records in each collection. */
   async recent(limit = 5): Promise<RecentActivity> {
-    const recentRows = async (table: string, columns: string, orderColumn: string) => {
-      const { data } = await supabase
-        .from(table)
-        .select(columns)
-        .order(orderColumn, { ascending: false })
-        .limit(limit)
+    const recentRows = async (table: TableName, select: Record<string, boolean>, orderColumn: string) => {
+      const rows = await MODELS[table].findMany({
+        select,
+        orderBy: { [orderColumn]: 'desc' },
+        take: limit,
+      })
 
-      return (data ?? []) as unknown as Record<string, unknown>[]
+      return rows as Record<string, unknown>[]
     }
 
     const [caseStudies, blogPosts, contactLeads, serviceSurveys] = await Promise.all([
-      recentRows('case_studies', 'id, title, slug, published, updated_at', 'updated_at'),
-      recentRows('blog_posts', 'id, title, slug, published, updated_at', 'updated_at'),
-      recentRows('contact_leads', 'id, full_name, email, submitted_at', 'submitted_at'),
-      recentRows('service_surveys', 'id, name, service, submitted_at', 'submitted_at'),
+      recentRows('case_studies', { id: true, title: true, slug: true, published: true, updated_at: true }, 'updated_at'),
+      recentRows('blog_posts', { id: true, title: true, slug: true, published: true, updated_at: true }, 'updated_at'),
+      recentRows('contact_leads', { id: true, full_name: true, email: true, submitted_at: true }, 'submitted_at'),
+      recentRows('service_surveys', { id: true, name: true, service: true, submitted_at: true }, 'submitted_at'),
     ])
 
     return {
