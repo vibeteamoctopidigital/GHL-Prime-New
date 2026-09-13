@@ -1,4 +1,4 @@
-import supabase from '../../config/supabase.js'
+import prisma from '../../config/prisma.js'
 import BaseService from '../../shared/services/BaseService.js'
 import { buildUniqueSlug } from '../../shared/utils/slug.js'
 import ApiError from '../../shared/utils/ApiError.js'
@@ -16,7 +16,7 @@ export interface BlogListOptions {
 class BlogService extends BaseService {
   constructor() {
     super({
-      table: 'blog_posts',
+      model: prisma.blogPost,
       resourceName: 'Blog post',
       defaultOrderBy: [
         { column: 'published_at', ascending: false },
@@ -98,13 +98,14 @@ class BlogService extends BaseService {
 
   /** Distinct categories with a post count — powers the blog filter bar. */
   async listCategories(): Promise<{ category: string; count: number }[]> {
-    const { data, error } = await supabase.from('blog_posts').select('category').eq('published', true)
-    if (error) throw ApiError.internal(`Could not load categories: ${error.message}`)
+    const rows: { category: string }[] = await prisma.blogPost.findMany({
+      where: { published: true },
+      select: { category: true },
+    })
 
     const counts = new Map<string, number>()
-    for (const row of data ?? []) {
-      const category = (row as { category: string }).category
-      if (category) counts.set(category, (counts.get(category) ?? 0) + 1)
+    for (const row of rows) {
+      if (row.category) counts.set(row.category, (counts.get(row.category) ?? 0) + 1)
     }
 
     return [...counts.entries()]
@@ -114,14 +115,13 @@ class BlogService extends BaseService {
 
   /** Slug + updated_at for every published post — used to build the sitemap. */
   async listPublishedSlugs(): Promise<{ slug: string; updated_at: string }[]> {
-    const { data, error } = await supabase
-      .from('blog_posts')
-      .select('slug, updated_at')
-      .eq('published', true)
-      .order('published_at', { ascending: false })
+    const rows: { slug: string; updated_at: Date }[] = await prisma.blogPost.findMany({
+      where: { published: true },
+      select: { slug: true, updated_at: true },
+      orderBy: { published_at: 'desc' },
+    })
 
-    if (error) throw ApiError.internal(`Could not load blog slugs: ${error.message}`)
-    return (data ?? []) as { slug: string; updated_at: string }[]
+    return rows.map((row) => ({ slug: row.slug, updated_at: row.updated_at.toISOString() }))
   }
 }
 

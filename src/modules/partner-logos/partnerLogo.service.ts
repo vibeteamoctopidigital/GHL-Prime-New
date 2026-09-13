@@ -1,3 +1,4 @@
+import prisma from '../../config/prisma.js'
 import SortableService from '../../shared/services/SortableService.js'
 import type { SerializedRow } from '../../types/common.js'
 
@@ -17,7 +18,7 @@ const serialize = (row: SerializedRow): SerializedRow => ({
 })
 
 export const partnerLogoService = new SortableService({
-  table: 'partner_logos',
+  model: prisma.partnerLogo,
   resourceName: 'Partner logo',
   searchableFields: ['company_name'],
   serialize,

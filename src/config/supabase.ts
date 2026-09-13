@@ -1,48 +1,36 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import env from './env.js'
-import logger from '../shared/utils/logger.js'
 
 /**
- * Supabase client used for ALL data access.
+ * Supabase client — Storage only now (`blogAi.images.ts`'s `blog-covers`
+ * bucket for AI-generated cover images). Every table read/write moved to
+ * Prisma (`config/prisma.ts`), which connects to whatever Postgres
+ * DATABASE_URL points at — no longer necessarily Supabase's. Supabase
+ * Storage is a separate product with no Prisma equivalent, which is the
+ * only reason this client still exists, and it's optional: left
+ * unconfigured, this is `null` and `blogAi.images.ts` falls back to the
+ * placeholder cover image instead of crashing the app at boot.
  *
- * Authenticates with the secret (service-role) key, which bypasses RLS — the
- * correct choice here because authorisation lives in this API's own JWT + role
- * middleware, and the key never leaves the server.
- *
- * `persistSession: false` matters on serverless: there is no browser, nothing
- * to persist into, and no state should carry between invocations.
+ * Authenticates with the secret (service-role) key — the correct choice
+ * here because authorisation lives in this API's own JWT + role middleware,
+ * and the key never leaves the server. `persistSession: false` matters on
+ * serverless: there is no browser, nothing to persist into, and no state
+ * should carry between invocations.
  */
 const globalForSupabase = globalThis as typeof globalThis & {
-  __ghlSupabaseClient?: SupabaseClient
+  __ghlSupabaseClient?: SupabaseClient | null
 }
 
-export const supabase: SupabaseClient =
-  globalForSupabase.__ghlSupabaseClient ??
-  createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+function buildClient(): SupabaseClient | null {
+  if (!env.hasSupabaseStorage) return null
+
+  return createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
-    db: { schema: 'public' },
     global: { headers: { 'x-application-name': 'ghlprime-api' } },
   })
+}
 
+export const supabase: SupabaseClient | null = globalForSupabase.__ghlSupabaseClient ?? buildClient()
 globalForSupabase.__ghlSupabaseClient = supabase
-
-/** Proves the project is reachable and the key is accepted. */
-export async function connectDatabase(): Promise<void> {
-  const { error } = await supabase.from('case_studies').select('id', { head: true, count: 'exact' })
-
-  if (error) {
-    throw new Error(
-      `Cannot reach Supabase (${env.SUPABASE_URL}): ${error.message}. ` +
-        'Check SUPABASE_URL and SUPABASE_SECRET_KEY.',
-    )
-  }
-
-  logger.info(`Supabase connected (${new URL(env.SUPABASE_URL).hostname})`)
-}
-
-/** Nothing to close — PostgREST is stateless HTTP. */
-export async function disconnectDatabase(): Promise<void> {
-  logger.info('Supabase client released')
-}
 
 export default supabase

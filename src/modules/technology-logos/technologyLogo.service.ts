@@ -1,7 +1,8 @@
+import prisma from '../../config/prisma.js'
 import SortableService from '../../shared/services/SortableService.js'
 
 export const technologyLogoService = new SortableService({
-  table: 'technology_logos',
+  model: prisma.technologyLogo,
   resourceName: 'Technology logo',
   searchableFields: ['name'],
 })

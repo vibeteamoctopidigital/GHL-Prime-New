@@ -58,11 +58,20 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
 
-  // --- Supabase (database via PostgREST) ------------------------------------
-  // All data access uses the secret (service-role) key over HTTPS. There is no
-  // Postgres connection string and no ORM connection pool.
-  SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL'),
-  SUPABASE_SECRET_KEY: z.string().min(20, 'SUPABASE_SECRET_KEY is required'),
+  // --- Database (Postgres via Prisma) -----------------------------------------
+  // Any Postgres — local, Railway, Supabase's, whatever — reachable at this
+  // connection string. prisma.config.ts (CLI-only: generate/introspect/migrate)
+  // reads the same var directly from process.env, so nothing else to set there.
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+
+  // --- Supabase Storage (optional — blogAi.images.ts's cover-image bucket) ---
+  // Postgres access no longer goes through Supabase at all (see DATABASE_URL
+  // above) — this is only for Supabase's Storage product, which has nothing to
+  // do with Postgres and has no Prisma equivalent. Deliberately optional, same
+  // soft pattern as Cloudinary below: left unset, generateCoverImage() just
+  // skips uploading and Auto Blog falls back to the placeholder cover image.
+  SUPABASE_URL: z.string().optional().default(''),
+  SUPABASE_SECRET_KEY: z.string().optional().default(''),
 
   JWT_ACCESS_SECRET: z.string().min(16, 'JWT_ACCESS_SECRET must be at least 16 characters'),
   JWT_REFRESH_SECRET: z.string().min(16, 'JWT_REFRESH_SECRET must be at least 16 characters'),
@@ -187,6 +196,8 @@ export interface AppEnv extends RawEnv {
   sitemapOutputDir: string
   /** True once Cloudinary credentials are present, in either supported form. */
   hasCloudinary: boolean
+  /** True once Supabase Storage credentials are present — otherwise Auto Blog cover images fall back to the placeholder URL. */
+  hasSupabaseStorage: boolean
   /** True when an unsigned upload preset is configured. */
   hasUploadPreset: boolean
   /** True once SMTP is configured — otherwise Auto Blog alert emails no-op with a warning. */
@@ -228,6 +239,7 @@ const hasCloudinary = Boolean(
 )
 
 const hasSmtp = Boolean(raw.SMTP_HOST && raw.SMTP_USER && raw.SMTP_PASSWORD)
+const hasSupabaseStorage = Boolean(raw.SUPABASE_URL && raw.SUPABASE_SECRET_KEY)
 
 export const env: AppEnv = {
   ...raw,
@@ -239,6 +251,7 @@ export const env: AppEnv = {
     ? raw.SITEMAP_OUTPUT_DIR
     : path.resolve(ROOT_DIR, raw.SITEMAP_OUTPUT_DIR),
   hasCloudinary,
+  hasSupabaseStorage,
   hasSmtp,
   adminAlertEmails: csv(raw.ADMIN_ALERT_EMAILS),
   hasUploadPreset: Boolean(raw.CLOUDINARY_UPLOAD_PRESET),

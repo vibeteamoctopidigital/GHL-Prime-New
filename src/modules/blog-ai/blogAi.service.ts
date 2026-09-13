@@ -1,4 +1,4 @@
-import supabase from '../../config/supabase.js'
+import prisma from '../../config/prisma.js'
 import ApiError from '../../shared/utils/ApiError.js'
 import { encryptToken } from '../../shared/utils/tokenCrypto.js'
 import { toSnakeCase } from '../../shared/serializers/caseTransform.js'
@@ -81,8 +81,22 @@ const DEFAULT_SETTINGS: BlogAiSettings = {
 }
 
 /** The encrypted `token` column is NEVER selected here — only `token_preview`. */
-const ACCOUNT_SAFE_COLUMNS =
-  'id, provider, label, token_preview, model, auth_type, enabled, status, cooldown_until, done_count, failed_count, last_used_at, last_error, created_at'
+const ACCOUNT_SAFE_SELECT = {
+  id: true,
+  provider: true,
+  label: true,
+  token_preview: true,
+  model: true,
+  auth_type: true,
+  enabled: true,
+  status: true,
+  cooldown_until: true,
+  done_count: true,
+  failed_count: true,
+  last_used_at: true,
+  last_error: true,
+  created_at: true,
+}
 
 /** Row shape needed to actually call a provider — includes the encrypted token. */
 export interface EngineAccount {
@@ -113,12 +127,14 @@ export type ProviderRuntime =
   | { provider: 'openai'; transport: 'codex-cli' }
   | { provider: 'openai'; transport: 'openai-api'; account: EngineAccount }
 
+/** True for Prisma's "record to update/delete not found" error (P2025). */
+const isPrismaNotFound = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && (error as { code: unknown }).code === 'P2025'
+
 class BlogAiService {
   async getSettings(): Promise<BlogAiSettings> {
-    const { data, error } = await supabase.from('blog_ai_settings').select('*').eq('id', true).maybeSingle()
-    if (error) throw ApiError.internal(`Could not load Auto Blog settings: ${error.message}`)
-
-    return { ...DEFAULT_SETTINGS, ...(data as Partial<BlogAiSettings> | null) }
+    const row = await prisma.blogAiSettings.findUnique({ where: { id: true } })
+    return { ...DEFAULT_SETTINGS, ...(row as unknown as Partial<BlogAiSettings> | null) }
   }
 
   /** Merges `fields` onto the EXISTING settings row, not onto the hardcoded defaults. */
@@ -144,24 +160,25 @@ class BlogAiService {
       }
     }
 
-    const { data, error } = await supabase
-      .from('blog_ai_settings')
-      .upsert({ id: true, ...next, updated_at: new Date().toISOString() }, { onConflict: 'id' })
-      .select('*')
-      .single()
+    let saved: unknown
+    try {
+      saved = await prisma.blogAiSettings.upsert({
+        where: { id: true },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamically built from the full settings shape, same as the rest of this dynamic-config table.
+        create: { id: true, ...next } as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        update: next as any,
+      })
+    } catch (error) {
+      throw ApiError.internal(`Could not save Auto Blog settings: ${error instanceof Error ? error.message : String(error)}`)
+    }
 
-    if (error) throw ApiError.internal(`Could not save Auto Blog settings: ${error.message}`)
-    return { ...DEFAULT_SETTINGS, ...(data as Partial<BlogAiSettings>) }
+    return { ...DEFAULT_SETTINGS, ...(saved as Partial<BlogAiSettings>) }
   }
 
   async listAccounts(): Promise<SerializedRow[]> {
-    const { data, error } = await supabase
-      .from('blog_ai_accounts')
-      .select(ACCOUNT_SAFE_COLUMNS)
-      .order('created_at', { ascending: true })
-
-    if (error) throw ApiError.internal(`Could not list accounts: ${error.message}`)
-    return (data ?? []) as unknown as SerializedRow[]
+    const rows = await prisma.blogAiAccount.findMany({ select: ACCOUNT_SAFE_SELECT, orderBy: { created_at: 'asc' } })
+    return rows as unknown as SerializedRow[]
   }
 
   async createAccount(body: CreateAccountBody): Promise<SerializedRow> {
@@ -193,22 +210,23 @@ class BlogAiService {
     const tokenPreview = opts.rawToken.slice(-4)
     const encryptedToken = encryptToken(opts.rawToken)
 
-    const { data, error } = await supabase
-      .from('blog_ai_accounts')
-      .insert({
-        provider: opts.provider,
-        label: opts.label,
-        token: encryptedToken,
-        token_preview: tokenPreview,
-        auth_type: opts.authType,
-        model: opts.model || null,
-        enabled: true,
+    try {
+      const created = await prisma.blogAiAccount.create({
+        data: {
+          provider: opts.provider,
+          label: opts.label,
+          token: encryptedToken,
+          token_preview: tokenPreview,
+          auth_type: opts.authType,
+          model: opts.model || null,
+          enabled: true,
+        },
+        select: ACCOUNT_SAFE_SELECT,
       })
-      .select(ACCOUNT_SAFE_COLUMNS)
-      .single()
-
-    if (error) throw ApiError.internal(`Could not save account: ${error.message}`)
-    return data as unknown as SerializedRow
+      return created as unknown as SerializedRow
+    } catch (error) {
+      throw ApiError.internal(`Could not save account: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   /**
@@ -219,36 +237,34 @@ class BlogAiService {
     const columns = Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined))
     if (Object.keys(columns).length === 0) return this.findAccountOrFail(id)
 
-    const { data, error } = await supabase
-      .from('blog_ai_accounts')
-      .update(columns)
-      .eq('id', id)
-      .select(ACCOUNT_SAFE_COLUMNS)
-      .maybeSingle()
-
-    if (error) throw ApiError.internal(`Could not update account: ${error.message}`)
-    if (!data) throw ApiError.notFound('Account not found')
-    return data as unknown as SerializedRow
+    try {
+      const updated = await prisma.blogAiAccount.update({ where: { id }, data: columns, select: ACCOUNT_SAFE_SELECT })
+      return updated as unknown as SerializedRow
+    } catch (error) {
+      if (isPrismaNotFound(error)) throw ApiError.notFound('Account not found')
+      throw ApiError.internal(`Could not update account: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   async deleteAccount(id: string): Promise<void> {
-    const { data, error } = await supabase.from('blog_ai_accounts').delete().eq('id', id).select('id').maybeSingle()
-    if (error) throw ApiError.internal(`Could not delete account: ${error.message}`)
-    if (!data) throw ApiError.notFound('Account not found')
+    try {
+      await prisma.blogAiAccount.delete({ where: { id } })
+    } catch (error) {
+      if (isPrismaNotFound(error)) throw ApiError.notFound('Account not found')
+      throw ApiError.internal(`Could not delete account: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   private async findAccountOrFail(id: string): Promise<SerializedRow> {
-    const { data, error } = await supabase.from('blog_ai_accounts').select(ACCOUNT_SAFE_COLUMNS).eq('id', id).maybeSingle()
-    if (error) throw ApiError.internal(`Could not load account: ${error.message}`)
-    if (!data) throw ApiError.notFound('Account not found')
-    return data as unknown as SerializedRow
+    const row = await prisma.blogAiAccount.findUnique({ where: { id }, select: ACCOUNT_SAFE_SELECT })
+    if (!row) throw ApiError.notFound('Account not found')
+    return row as unknown as SerializedRow
   }
 
   /** Row WITH the encrypted token — internal use only (testing / engine runs), never returned via the API. */
   async getAccountWithToken(id: string): Promise<SerializedRow | null> {
-    const { data, error } = await supabase.from('blog_ai_accounts').select('*').eq('id', id).maybeSingle()
-    if (error) throw ApiError.internal(`Could not load account: ${error.message}`)
-    return data as unknown as SerializedRow | null
+    const row = await prisma.blogAiAccount.findUnique({ where: { id } })
+    return row as unknown as SerializedRow | null
   }
 
   /**
@@ -264,19 +280,17 @@ class BlogAiService {
    * for manual runs.
    */
   async pickAvailableAccount(provider: BlogAiProvider, opts: { authType?: AuthType } = {}): Promise<EngineAccount | null> {
-    let query = supabase
-      .from('blog_ai_accounts')
-      .select('*')
-      .eq('provider', provider)
-      .eq('enabled', true)
-      .or(`cooldown_until.is.null,cooldown_until.lt.${new Date().toISOString()}`)
+    const account = await prisma.blogAiAccount.findFirst({
+      where: {
+        provider,
+        enabled: true,
+        OR: [{ cooldown_until: null }, { cooldown_until: { lt: new Date() } }],
+        ...(opts.authType ? { auth_type: opts.authType } : {}),
+      },
+      orderBy: { last_used_at: { sort: 'asc', nulls: 'first' } },
+    })
 
-    if (opts.authType) query = query.eq('auth_type', opts.authType)
-
-    const { data, error } = await query.order('last_used_at', { ascending: true, nullsFirst: true }).limit(1)
-
-    if (error) throw ApiError.internal(`Could not pick a ${provider} account: ${error.message}`)
-    return (data?.[0] as EngineAccount | undefined) ?? null
+    return (account as unknown as EngineAccount) ?? null
   }
 
   /**
@@ -326,14 +340,13 @@ class BlogAiService {
   }
 
   async listRuns(limit = 50): Promise<SerializedRow[]> {
-    const { data, error } = await supabase
-      .from('blog_ai_runs')
-      .select('*, blog_post:blog_posts(title, slug, published)')
-      .order('started_at', { ascending: false })
-      .limit(limit)
+    const rows = await prisma.blogAiRun.findMany({
+      include: { blog_post: { select: { title: true, slug: true, published: true } } },
+      orderBy: { started_at: 'desc' },
+      take: limit,
+    })
 
-    if (error) throw ApiError.internal(`Could not load run history: ${error.message}`)
-    return (data ?? []) as unknown as SerializedRow[]
+    return rows as unknown as SerializedRow[]
   }
 }
 

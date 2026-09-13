@@ -1,4 +1,4 @@
-import supabase from '../../config/supabase.js'
+import prisma from '../../config/prisma.js'
 import env from '../../config/env.js'
 import logger from '../../shared/utils/logger.js'
 import { decryptToken } from '../../shared/utils/tokenCrypto.js'
@@ -42,20 +42,20 @@ export const RUN_STEPS = ['researching', 'writing', 'reviewing_content', 'genera
 export type RunStep = (typeof RUN_STEPS)[number]
 
 async function setRunStep(runId: string, step: RunStep): Promise<void> {
-  const { error } = await supabase.from('blog_ai_runs').update({ current_step: step }).eq('id', runId)
-  if (error) logger.warn(`Blog AI: could not record run step "${step}":`, error.message)
+  try {
+    await prisma.blogAiRun.update({ where: { id: runId }, data: { current_step: step } })
+  } catch (error) {
+    logger.warn(`Blog AI: could not record run step "${step}":`, error instanceof Error ? error.message : error)
+  }
 }
 
 async function isAlreadyRunning(): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('blog_ai_runs')
-    .select('id')
-    .eq('status', 'running')
-    .gt('started_at', new Date(Date.now() - RUN_STALE_MINUTES * 60_000).toISOString())
-    .limit(1)
+  const running = await prisma.blogAiRun.findFirst({
+    where: { status: 'running', started_at: { gt: new Date(Date.now() - RUN_STALE_MINUTES * 60_000) } },
+    select: { id: true },
+  })
 
-  if (error) throw new Error(`Could not check in-progress runs: ${error.message}`)
-  return (data ?? []).length > 0
+  return Boolean(running)
 }
 
 function buildPrompt(
@@ -207,16 +207,13 @@ export async function runBlogAiEngine(opts: { billingSafeOnly?: boolean } = {}):
     }
   }
 
-  const { data: runRow, error: runInsertError } = await supabase
-    .from('blog_ai_runs')
-    .insert({ status: 'running' })
-    .select('id')
-    .single()
-
-  if (runInsertError || !runRow) {
-    throw new Error(`Could not start a run: ${runInsertError?.message ?? 'no row returned'}`)
+  let runRow: { id: string }
+  try {
+    runRow = await prisma.blogAiRun.create({ data: { status: 'running' }, select: { id: true } })
+  } catch (error) {
+    throw new Error(`Could not start a run: ${error instanceof Error ? error.message : String(error)}`)
   }
-  const runId = runRow['id'] as string
+  const runId = runRow.id
 
   let runtime: ProviderRuntime | null = null
   let provider: BlogAiProvider | null = null
@@ -224,12 +221,12 @@ export async function runBlogAiEngine(opts: { billingSafeOnly?: boolean } = {}):
   try {
     const settings = await blogAiService.getSettings()
 
-    const { data: recentPosts } = await supabase
-      .from('blog_posts')
-      .select('title, category, slug')
-      .eq('published', true)
-      .order('published_at', { ascending: false })
-      .limit(30)
+    const recentPosts = await prisma.blogPost.findMany({
+      where: { published: true },
+      select: { title: true, category: true, slug: true },
+      orderBy: { published_at: 'desc' },
+      take: 30,
+    })
 
     runtime = await blogAiService.resolveProviderRuntime(settings.primary_provider, opts)
 
@@ -324,76 +321,76 @@ export async function runBlogAiEngine(opts: { billingSafeOnly?: boolean } = {}):
     }
 
     await setRunStep(runId, 'saving_draft')
-    const reviewDeadline = new Date(Date.now() + settings.review_window_minutes * 60_000).toISOString()
+    const reviewDeadline = new Date(Date.now() + settings.review_window_minutes * 60_000)
 
-    const { data: draftRow, error: draftError } = await supabase
-      .from('blog_ai_drafts')
-      .insert({
-        run_id: runId,
-        provider,
-        title: generated.title,
-        slug,
-        category: generated.category,
-        primary_keyword: generated.primary_keyword,
-        tags: generated.tags,
-        excerpt: generated.excerpt,
-        content: generated.content,
-        seo_title: generated.seo_title,
-        seo_description: generated.seo_description,
-        seo_keywords: generated.seo_keywords,
-        reading_time: computeReadingTime(generated.content),
-        topic_research: assignedTopic,
-        cover_image: coverImage?.url ?? null,
-        cover_image_alt: coverImage?.alt ?? null,
-        status: 'pending_review',
-        review_deadline: reviewDeadline,
-      })
-      .select('*')
-      .single()
-
-    if (draftError || !draftRow) {
-      throw new Error(`Generated content but could not save the draft: ${draftError?.message ?? 'no row returned'}`)
+    let draftRow: SerializedRow
+    try {
+      draftRow = (await prisma.blogAiDraft.create({
+        data: {
+          run_id: runId,
+          provider,
+          title: generated.title,
+          slug,
+          category: generated.category,
+          primary_keyword: generated.primary_keyword,
+          tags: generated.tags,
+          excerpt: generated.excerpt,
+          content: generated.content,
+          seo_title: generated.seo_title,
+          seo_description: generated.seo_description,
+          seo_keywords: generated.seo_keywords,
+          reading_time: computeReadingTime(generated.content),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ResearchResult is a plain JSON-serializable object, matching the `Json` column.
+          topic_research: assignedTopic as any,
+          cover_image: coverImage?.url ?? null,
+          cover_image_alt: coverImage?.alt ?? null,
+          status: 'pending_review',
+          review_deadline: reviewDeadline,
+        },
+      })) as unknown as SerializedRow
+    } catch (error) {
+      throw new Error(`Generated content but could not save the draft: ${error instanceof Error ? error.message : String(error)}`)
     }
 
-    await supabase
-      .from('blog_ai_runs')
-      .update({
+    await prisma.blogAiRun.update({
+      where: { id: runId },
+      data: {
         status: 'success',
         provider,
         account_label: 'account' in runtime ? runtime.account.label : 'codex (ambient login)',
         current_step: null,
-        finished_at: new Date().toISOString(),
-      })
-      .eq('id', runId)
+        finished_at: new Date(),
+      },
+    })
 
     if ('account' in runtime) {
-      await supabase
-        .from('blog_ai_accounts')
-        .update({ done_count: runtime.account.done_count + 1, last_used_at: new Date().toISOString(), status: 'idle' })
-        .eq('id', runtime.account.id)
+      await prisma.blogAiAccount.update({
+        where: { id: runtime.account.id },
+        data: { done_count: runtime.account.done_count + 1, last_used_at: new Date(), status: 'idle' },
+      })
     }
 
-    return { started: true, success: true, runId, draft: draftRow as unknown as SerializedRow }
+    return { started: true, success: true, runId, draft: draftRow }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     logger.error('Blog AI run failed:', message)
 
-    await supabase
-      .from('blog_ai_runs')
-      .update({ status: 'failed', provider, error: message, current_step: null, finished_at: new Date().toISOString() })
-      .eq('id', runId)
+    await prisma.blogAiRun.update({
+      where: { id: runId },
+      data: { status: 'failed', provider, error: message, current_step: null, finished_at: new Date() },
+    })
 
     if (runtime && 'account' in runtime) {
       const account = runtime.account
-      await supabase
-        .from('blog_ai_accounts')
-        .update({
+      await prisma.blogAiAccount.update({
+        where: { id: account.id },
+        data: {
           failed_count: account.failed_count + 1,
-          cooldown_until: new Date(Date.now() + COOLDOWN_MINUTES * 60_000).toISOString(),
+          cooldown_until: new Date(Date.now() + COOLDOWN_MINUTES * 60_000),
           status: 'disabled_cooldown',
           last_error: message,
-        })
-        .eq('id', account.id)
+        },
+      })
     }
 
     await notifyRunFailure(runId, message)
@@ -409,21 +406,21 @@ export async function runBlogAiEngine(opts: { billingSafeOnly?: boolean } = {}):
  * next one knows.
  */
 async function notifyRunFailure(runId: string, message: string): Promise<void> {
-  const { data: recentAlert } = await supabase
-    .from('blog_ai_runs')
-    .select('id')
-    .not('alerted_at', 'is', null)
-    .gt('alerted_at', new Date(Date.now() - 30 * 60_000).toISOString())
-    .limit(1)
+  // `gt` already excludes NULL alerted_at rows — Postgres never satisfies a
+  // `> date` comparison against NULL — so no separate "is not null" check is needed.
+  const recentAlert = await prisma.blogAiRun.findFirst({
+    where: { alerted_at: { gt: new Date(Date.now() - 30 * 60_000) } },
+    select: { id: true },
+  })
 
-  if ((recentAlert ?? []).length > 0) return
+  if (recentAlert) return
 
   await sendAdminAlert({
     subject: 'Auto Blog run failed',
     text: `A Auto Blog generation run failed:\n\n${message}\n\nRun ID: ${runId}`,
   })
 
-  await supabase.from('blog_ai_runs').update({ alerted_at: new Date().toISOString() }).eq('id', runId)
+  await prisma.blogAiRun.update({ where: { id: runId }, data: { alerted_at: new Date() } })
 }
 
 export default runBlogAiEngine

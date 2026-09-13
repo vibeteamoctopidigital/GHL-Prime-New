@@ -10,8 +10,7 @@
 // entirely, unlike job #1 in this script. It does NOT run the sweep itself;
 // waiting for/triggering this script is still how a review-window timeout
 // gets tested.
-import { disconnectDatabase } from '../src/config/supabase.js'
-import supabase from '../src/config/supabase.js'
+import prisma, { disconnectDatabase } from '../src/config/prisma.js'
 import blogAiService from '../src/modules/blog-ai/blogAi.service.js'
 import { runBlogAiEngine } from '../src/modules/blog-ai/blogAi.engine.js'
 import { sweepExpiredDrafts } from '../src/modules/blog-ai/blogAi.checker.js'
@@ -19,24 +18,18 @@ import logger from '../src/shared/utils/logger.js'
 
 const FAILURE_RETRY_MINUTES = 30
 
-function startOfUtcDay(): string {
+function startOfUtcDay(): Date {
   const now = new Date()
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString()
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
 }
 
 async function shouldRunNow(): Promise<{ run: boolean; reason?: string }> {
   const settings = await blogAiService.getSettings()
   const currentUtcHour = new Date().getUTCHours()
 
-  const { count: doneToday, error: countError } = await supabase
-    .from('blog_ai_runs')
-    .select('id', { count: 'exact', head: true })
-    .eq('status', 'success')
-    .gte('started_at', startOfUtcDay())
+  const doneToday = await prisma.blogAiRun.count({ where: { status: 'success', started_at: { gte: startOfUtcDay() } } })
 
-  if (countError) throw new Error(`Could not check today's run count: ${countError.message}`)
-
-  if ((doneToday ?? 0) >= settings.posts_per_day) {
+  if (doneToday >= settings.posts_per_day) {
     return { run: false, reason: `today's target of ${settings.posts_per_day} post(s) already met (${doneToday} done)` }
   }
 
@@ -47,16 +40,13 @@ async function shouldRunNow(): Promise<{ run: boolean; reason?: string }> {
     }
   }
 
-  const { data: recentFailures, error: failureError } = await supabase
-    .from('blog_ai_runs')
-    .select('id')
-    .eq('status', 'failed')
-    .gt('finished_at', new Date(Date.now() - FAILURE_RETRY_MINUTES * 60_000).toISOString())
-    .order('finished_at', { ascending: false })
-    .limit(1)
+  const recentFailure = await prisma.blogAiRun.findFirst({
+    where: { status: 'failed', finished_at: { gt: new Date(Date.now() - FAILURE_RETRY_MINUTES * 60_000) } },
+    orderBy: { finished_at: 'desc' },
+    select: { id: true },
+  })
 
-  if (failureError) throw new Error(`Could not check recent failures: ${failureError.message}`)
-  if ((recentFailures ?? []).length) {
+  if (recentFailure) {
     return { run: false, reason: `retry backoff — waiting ${FAILURE_RETRY_MINUTES} minutes after last failure` }
   }
 

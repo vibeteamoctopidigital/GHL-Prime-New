@@ -1,5 +1,5 @@
 import type { UploadApiOptions, UploadApiResponse } from 'cloudinary'
-import supabase from '../../config/supabase.js'
+import prisma from '../../config/prisma.js'
 import env from '../../config/env.js'
 import { getCloudinary } from '../../config/cloudinary.js'
 import BaseService from '../../shared/services/BaseService.js'
@@ -61,7 +61,7 @@ function describeCloudinaryError(error: unknown): ApiError {
 class UploadService extends BaseService {
   constructor() {
     super({
-      table: 'media_assets',
+      model: prisma.mediaAsset,
       resourceName: 'Media asset',
       defaultOrderBy: [{ column: 'created_at', ascending: false }],
       searchableFields: ['original_filename', 'alt', 'public_id'],
@@ -187,16 +187,21 @@ class UploadService extends BaseService {
     // Upsert, not insert: Cloudinary returns the existing public_id when an
     // asset is overwritten, and that must refresh the row rather than collide
     // on the unique index.
-    const { data: asset, error } = await supabase
-      .from('media_assets')
-      .upsert(this.toColumns({ publicId: result.public_id, ...record }), { onConflict: 'public_id' })
-      .select('*')
-      .single()
-
-    if (error) this.fail('Could not record the uploaded image', error)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- built dynamically from Cloudinary's response + caller options, same as every other toColumns() payload in this codebase.
+    const columns = this.toColumns({ publicId: result.public_id, ...record }) as any
+    let asset: SerializedRow
+    try {
+      asset = await prisma.mediaAsset.upsert({
+        where: { public_id: result.public_id },
+        create: columns,
+        update: columns,
+      })
+    } catch (error) {
+      this.fail('Could not record the uploaded image', error)
+    }
 
     logger.info(`Uploaded image ${result.public_id} (${result.bytes} bytes)`)
-    return this.serialize(asset as SerializedRow)
+    return this.serialize(asset)
   }
 
   /** Uploads several images. One failure does not discard the successes. */
@@ -262,8 +267,11 @@ class UploadService extends BaseService {
       logger.warn(`Cloudinary asset ${publicId} could not be deleted (${remoteError}); removing the local record anyway`)
     }
 
-    const { error: deleteError } = await supabase.from('media_assets').delete().eq('public_id', publicId)
-    if (deleteError) this.fail('Could not remove the media record', deleteError)
+    try {
+      await prisma.mediaAsset.delete({ where: { public_id: publicId } })
+    } catch (error) {
+      this.fail('Could not remove the media record', error)
+    }
 
     logger.info(`Deleted image ${publicId}${remoteDeleted ? '' : ' (local record only)'}`)
 

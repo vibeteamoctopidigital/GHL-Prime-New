@@ -1,4 +1,4 @@
-import supabase from '../../config/supabase.js'
+import prisma from '../../config/prisma.js'
 import BaseService, { type BaseServiceOptions, type ListOptions } from './BaseService.js'
 import ApiError from '../utils/ApiError.js'
 import { DEFAULT_SORT_ORDER, SORTABLE_ORDER_BY } from '../../config/constants.js'
@@ -41,44 +41,48 @@ export class SortableService extends BaseService {
     return this.list(options)
   }
 
-  override create(data: Record<string, unknown>, options?: { select?: string }): Promise<SerializedRow> {
+  override create(data: Record<string, unknown>, options?: { select?: string[] }): Promise<SerializedRow> {
     return super.create({ sortOrder: DEFAULT_SORT_ORDER, ...data }, options)
   }
 
   /**
-   * Persists a new ordering.
+   * Persists a new ordering as one real database transaction.
    *
-   * PostgREST exposes no transactions, so this reads the affected rows, merges
-   * the new positions, and writes them back in ONE upsert. That single request
-   * becomes a single `INSERT ... ON CONFLICT DO UPDATE` statement, which
-   * Postgres applies atomically — so the list is never observed half-reordered,
-   * which N separate PATCHes could not guarantee.
+   * The previous PostgREST implementation relied on a single bulk
+   * `INSERT ... ON CONFLICT DO UPDATE` for atomicity, since PostgREST itself
+   * has no transaction support. Prisma does, so this is now N per-row
+   * updates wrapped in `$transaction` — same atomicity guarantee (the list
+   * is never observed half-reordered), simpler to read, and it no longer
+   * needs to round-trip full rows just to satisfy an upsert's NOT NULL
+   * columns the way the old approach did.
    */
   async reorder(items: ReorderItem[] = []): Promise<ReorderResult> {
     if (items.length === 0) return { updated: 0 }
 
     const ids = items.map((item) => item.id)
+    const found: { id: string }[] = await this.model.findMany({ where: { id: { in: ids } }, select: { id: true } })
 
-    const { data: rows, error: readError } = await supabase.from(this.table).select('*').in('id', ids)
-    if (readError) this.fail(`Could not reorder ${this.resourceName}`, readError)
-
-    const found = rows ?? []
-    const missing = ids.filter((id) => !found.some((row) => row['id'] === id))
+    const foundIds = new Set(found.map((row) => row.id))
+    const missing = ids.filter((id) => !foundIds.has(id))
     if (missing.length > 0) {
       throw ApiError.notFound(`${this.resourceName} not found: ${missing.join(', ')}`)
     }
 
-    // Full rows are sent back so the INSERT half of the upsert satisfies every
-    // NOT NULL column; only sort_order differs.
-    const payload = found.map((row) => {
-      const item = items.find((entry) => entry.id === row['id'])
-      return { ...row, sort_order: Number(item?.sortOrder) || DEFAULT_SORT_ORDER }
-    })
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PrismaModelDelegate's loose typing doesn't carry the real PrismaPromise type $transaction expects; the runtime objects are the genuine Prisma client's, so this is safe.
+      await prisma.$transaction(
+        items.map((item) =>
+          this.model.update({
+            where: { id: item.id },
+            data: { sort_order: Number(item.sortOrder) || DEFAULT_SORT_ORDER },
+          }),
+        ) as any[],
+      )
+    } catch (error) {
+      this.fail(`Could not reorder ${this.resourceName}`, error)
+    }
 
-    const { error } = await supabase.from(this.table).upsert(payload, { onConflict: 'id' })
-    if (error) this.fail(`Could not reorder ${this.resourceName}`, error)
-
-    return { updated: payload.length }
+    return { updated: items.length }
   }
 }
 

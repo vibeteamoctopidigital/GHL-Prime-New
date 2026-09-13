@@ -34,6 +34,11 @@ export async function generateCoverImage(opts: {
   title: string
   excerpt: string
 }): Promise<CoverImage | null> {
+  if (!supabase) {
+    logger.warn('Blog AI: Supabase Storage is not configured (SUPABASE_URL/SUPABASE_SECRET_KEY) — skipping cover image, using the placeholder instead.')
+    return null
+  }
+
   try {
     const client = new OpenAI({ apiKey: opts.apiKey, timeout: IMAGE_TIMEOUT_MS })
 

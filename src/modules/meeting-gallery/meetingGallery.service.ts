@@ -1,7 +1,8 @@
+import prisma from '../../config/prisma.js'
 import SortableService from '../../shared/services/SortableService.js'
 
 export const meetingGalleryService = new SortableService({
-  table: 'meeting_gallery',
+  model: prisma.meetingGallery,
   resourceName: 'Meeting gallery item',
   searchableFields: ['title'],
 })
