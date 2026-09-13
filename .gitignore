@@ -1,6 +1,4 @@
 node_modules/
-.env
-.env.*
 !.env.example
 dist/
 build/
@@ -11,9 +9,9 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 .idea/
-.vscode/
 prisma/*.db
 prisma/*.db-journal
 .routes.json
 
 
+config.bat

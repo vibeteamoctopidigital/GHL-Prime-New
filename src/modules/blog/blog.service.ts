@@ -113,15 +113,15 @@ class BlogService extends BaseService {
       .sort((a, b) => a.category.localeCompare(b.category))
   }
 
-  /** Slug + updated_at for every published post — used to build the sitemap. */
-  async listPublishedSlugs(): Promise<{ slug: string; updated_at: string }[]> {
-    const rows: { slug: string; updated_at: Date }[] = await prisma.blogPost.findMany({
+  /** Slug + updated_at for every published post — used to build the sitemap. sitemap.service.ts's toIso() already tolerates a null updated_at. */
+  async listPublishedSlugs(): Promise<{ slug: string; updated_at: string | null }[]> {
+    const rows: { slug: string; updated_at: Date | null }[] = await prisma.blogPost.findMany({
       where: { published: true },
       select: { slug: true, updated_at: true },
       orderBy: { published_at: 'desc' },
     })
 
-    return rows.map((row) => ({ slug: row.slug, updated_at: row.updated_at.toISOString() }))
+    return rows.map((row) => ({ slug: row.slug, updated_at: row.updated_at?.toISOString() ?? null }))
   }
 }
 

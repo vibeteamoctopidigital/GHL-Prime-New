@@ -115,15 +115,15 @@ class CaseStudyService extends BaseService {
       .sort((a, b) => a.category.localeCompare(b.category))
   }
 
-  /** Slug + updated_at for every published study — used to build the sitemap. */
-  async listPublishedSlugs(): Promise<{ slug: string; updated_at: string }[]> {
-    const rows: { slug: string; updated_at: Date }[] = await prisma.caseStudy.findMany({
+  /** Slug + updated_at for every published study — used to build the sitemap. sitemap.service.ts's toIso() already tolerates a null updated_at. */
+  async listPublishedSlugs(): Promise<{ slug: string; updated_at: string | null }[]> {
+    const rows: { slug: string; updated_at: Date | null }[] = await prisma.caseStudy.findMany({
       where: { published: true },
       select: { slug: true, updated_at: true },
       orderBy: { created_at: 'desc' },
     })
 
-    return rows.map((row) => ({ slug: row.slug, updated_at: row.updated_at.toISOString() }))
+    return rows.map((row) => ({ slug: row.slug, updated_at: row.updated_at?.toISOString() ?? null }))
   }
 }
 

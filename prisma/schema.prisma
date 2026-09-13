@@ -55,8 +55,8 @@ model CaseStudy {
   body       Json     @default("[]")
   featured   Boolean  @default(false)
   published  Boolean  @default(true)
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @default(now()) @db.Timestamptz(6)
 
   assigned_team_members CaseStudyTeamMember[]
 
@@ -69,9 +69,9 @@ model TeamMember {
   role           String
   description    String?
   image_url      String?
-  created_at     DateTime @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime @default(now()) @db.Timestamptz(6)
-  sort_order     Int      @default(999)
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime? @default(now()) @db.Timestamptz(6)
+  sort_order     Int       @default(999)
   linkedin_url   String?
   facebook_url   String?
   instagram_url  String?
@@ -115,8 +115,8 @@ model MeetingGallery {
   image_url  String
   sort_order Int      @default(999)
   published  Boolean  @default(true)
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @default(now()) @db.Timestamptz(6)
 
   @@map("meeting_gallery")
 }
@@ -127,8 +127,8 @@ model TechnologyLogo {
   image_url  String
   sort_order Int      @default(999)
   published  Boolean  @default(true)
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @default(now()) @db.Timestamptz(6)
 
   @@map("technology_logos")
 }
@@ -140,8 +140,8 @@ model PartnerLogo {
   website_url     String?
   sort_order      Int?     @default(1)
   published       Boolean  @default(true)
-  created_at      DateTime @default(now()) @db.Timestamptz(6)
-  updated_at      DateTime @default(now()) @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime? @default(now()) @db.Timestamptz(6)
   image_url       String?
   name            String?
 
@@ -166,7 +166,7 @@ model BlogPost {
   published        Boolean   @default(false)
   published_at     DateTime? @db.Timestamptz(6)
   created_at       DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime? @default(now()) @db.Timestamptz(6)
 
   ai_runs   BlogAiRun[]
   ai_drafts BlogAiDraft[]
@@ -187,8 +187,8 @@ model ShowcaseItem {
   adaptation_tags       Json     @default("[]")
   sort_order            Int      @default(999)
   published             Boolean  @default(true)
-  created_at            DateTime @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime @default(now()) @db.Timestamptz(6)
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime? @default(now()) @db.Timestamptz(6)
 
   placements ShowcasePlacement[]
 
@@ -201,8 +201,8 @@ model ShowcaseStat {
   label      String
   sort_order Int      @default(999)
   published  Boolean  @default(true)
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @default(now()) @db.Timestamptz(6)
 
   @@map("showcase_stats")
 }
@@ -226,8 +226,8 @@ model GalleryCategory {
   slug       String   @unique
   sort_order Int      @default(999)
   published  Boolean  @default(true)
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @default(now()) @db.Timestamptz(6)
 
   images GalleryImage[]
 
@@ -241,8 +241,8 @@ model GalleryImage {
   category_id String?  @db.Uuid
   sort_order  Int      @default(999)
   published   Boolean  @default(true)
-  created_at  DateTime @default(now()) @db.Timestamptz(6)
-  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime? @default(now()) @db.Timestamptz(6)
 
   category GalleryCategory? @relation(fields: [category_id], references: [id])
 

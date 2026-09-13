@@ -79,7 +79,7 @@ class SitemapService {
     const seen = new Set<string>()
     const dynamicRoutes: SitemapRoute[] = []
 
-    const add = (prefix: string, rows: { slug: string; updated_at: string }[], priority: string): void => {
+    const add = (prefix: string, rows: { slug: string; updated_at: string | null }[], priority: string): void => {
       for (const row of rows) {
         if (!row.slug?.trim()) continue
 
