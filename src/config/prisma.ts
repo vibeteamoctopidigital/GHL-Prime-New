@@ -1,6 +1,14 @@
 import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '@prisma/client'
-import env from './env.js'
+// Load .env BEFORE the pg adapter below reads process.env.DATABASE_URL.
+// This file used to rely on its importer importing config/env.js first, but
+// ES module imports are hoisted: seed.ts, blog-watch.ts and the other
+// scripts here import prisma.js on an earlier line, so the adapter was
+// constructed with DATABASE_URL undefined and every standalone script died
+// with "SASL: client password must be a string". dotenv is idempotent, so
+// the server's own env.js import is unaffected.
+import dotenv from 'dotenv'
+dotenv.config({ path: new URL('../../.env', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1') })
 import logger from '../shared/utils/logger.js'
 
 /**
@@ -19,7 +27,7 @@ import logger from '../shared/utils/logger.js'
  */
 const globalForPrisma = globalThis as typeof globalThis & { __ghlPrisma?: PrismaClient }
 
-const adapter = new PrismaPg({ connectionString: env.DATABASE_URL })
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL })
 
 export const prisma: PrismaClient = globalForPrisma.__ghlPrisma ?? new PrismaClient({ adapter })
 globalForPrisma.__ghlPrisma = prisma
