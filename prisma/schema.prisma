@@ -41,8 +41,8 @@ enum LeadStatus {
 }
 
 model CaseStudy {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  slug       String   @unique
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug       String    @unique
   title      String
   category   String
   subtitle   String?
@@ -51,10 +51,10 @@ model CaseStudy {
   outcome    String?
   excerpt    String?
   image      String?
-  accent     String?  @default("emerald")
-  body       Json     @default("[]")
-  featured   Boolean  @default(false)
-  published  Boolean  @default(true)
+  accent     String?   @default("emerald")
+  body       Json      @default("[]")
+  featured   Boolean   @default(false)
+  published  Boolean   @default(true)
   created_at DateTime  @default(now()) @db.Timestamptz(6)
   updated_at DateTime? @default(now()) @db.Timestamptz(6)
 
@@ -64,20 +64,20 @@ model CaseStudy {
 }
 
 model TeamMember {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name           String
-  role           String
-  description    String?
-  image_url      String?
-  created_at     DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime? @default(now()) @db.Timestamptz(6)
-  sort_order     Int       @default(999)
-  linkedin_url   String?
-  facebook_url   String?
-  instagram_url  String?
-  twitter_url    String?
-  upwork_url     String?
-  website_url    String?
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String
+  role          String
+  description   String?
+  image_url     String?
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime? @default(now()) @db.Timestamptz(6)
+  sort_order    Int       @default(999)
+  linkedin_url  String?
+  facebook_url  String?
+  instagram_url String?
+  twitter_url   String?
+  upwork_url    String?
+  website_url   String?
 
   case_study_assignments CaseStudyTeamMember[]
 
@@ -110,11 +110,11 @@ model TeamPageMember {
 }
 
 model MeetingGallery {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   title      String?
   image_url  String
-  sort_order Int      @default(999)
-  published  Boolean  @default(true)
+  sort_order Int       @default(999)
+  published  Boolean   @default(true)
   created_at DateTime  @default(now()) @db.Timestamptz(6)
   updated_at DateTime? @default(now()) @db.Timestamptz(6)
 
@@ -122,11 +122,11 @@ model MeetingGallery {
 }
 
 model TechnologyLogo {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name       String
   image_url  String
-  sort_order Int      @default(999)
-  published  Boolean  @default(true)
+  sort_order Int       @default(999)
+  published  Boolean   @default(true)
   created_at DateTime  @default(now()) @db.Timestamptz(6)
   updated_at DateTime? @default(now()) @db.Timestamptz(6)
 
@@ -134,61 +134,75 @@ model TechnologyLogo {
 }
 
 model PartnerLogo {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  company_name    String
-  logo_image_url  String?
-  website_url     String?
-  sort_order      Int?     @default(1)
-  published       Boolean  @default(true)
-  created_at      DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at      DateTime? @default(now()) @db.Timestamptz(6)
-  image_url       String?
-  name            String?
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_name   String
+  logo_image_url String?
+  website_url    String?
+  sort_order     Int?      @default(1)
+  published      Boolean   @default(true)
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime? @default(now()) @db.Timestamptz(6)
+  image_url      String?
+  name           String?
 
   @@map("partner_logos")
 }
 
 model BlogPost {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  slug             String    @unique
-  title            String
-  category         String
-  tags             String[]  @default([])
-  author           String?   @default("GHL Prime Team")
-  excerpt          String?
-  cover_image      String?
-  reading_time     Int?
-  content          String?
-  seo_title        String?
-  seo_description  String?
-  seo_keywords     String?
-  featured         Boolean   @default(false)
-  published        Boolean   @default(false)
-  published_at     DateTime? @db.Timestamptz(6)
-  created_at       DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime? @default(now()) @db.Timestamptz(6)
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug            String    @unique
+  title           String
+  category        String
+  tags            String[]  @default([])
+  author          String?   @default("GHL Prime Team")
+  excerpt         String?
+  cover_image     String?
+  reading_time    Int?
+  content         String?
+  seo_title       String?
+  seo_description String?
+  seo_keywords    String?
+  featured        Boolean   @default(false)
+  published       Boolean   @default(false)
+  published_at    DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime? @default(now()) @db.Timestamptz(6)
 
-  ai_runs   BlogAiRun[]
-  ai_drafts BlogAiDraft[]
+  // --- Blog Writer (added below BlogAiRun/BlogAiDraft on purpose — this
+  // model already has a lot of history in the real table, and every new
+  // column here must be optional/no-default so every existing row stays
+  // valid untouched; see the safety notes on the Blog Writer models below). ---
+  target_keyword String?
+  cta_variant    String?
+  sources        Json?
+  research_mode  String?
+  source_url     String?
+  source_name    String?
+  topic_id       String? @db.Uuid
+
+  ai_runs        BlogAiRun[]
+  ai_drafts      BlogAiDraft[]
+  write_requests BlogWriteRequest[]
+  topic          BlogTopic?         @relation(fields: [topic_id], references: [id], onDelete: SetNull)
 
   @@map("blog_posts")
 }
 
 model ShowcaseItem {
-  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  origin_name           String
-  origin_url            String?
-  origin_icon           String?
-  origin_description    String?
-  origin_tagline        String?
-  adaptation_badge      String?  @default("Enterprise Adaptation")
-  adaptation_name       String
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  origin_name            String
+  origin_url             String?
+  origin_icon            String?
+  origin_description     String?
+  origin_tagline         String?
+  adaptation_badge       String?   @default("Enterprise Adaptation")
+  adaptation_name        String
   adaptation_description String?
-  adaptation_tags       Json     @default("[]")
-  sort_order            Int      @default(999)
-  published             Boolean  @default(true)
-  created_at            DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime? @default(now()) @db.Timestamptz(6)
+  adaptation_tags        Json      @default("[]")
+  sort_order             Int       @default(999)
+  published              Boolean   @default(true)
+  created_at             DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime? @default(now()) @db.Timestamptz(6)
 
   placements ShowcasePlacement[]
 
@@ -196,11 +210,11 @@ model ShowcaseItem {
 }
 
 model ShowcaseStat {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   value      String
   label      String
-  sort_order Int      @default(999)
-  published  Boolean  @default(true)
+  sort_order Int       @default(999)
+  published  Boolean   @default(true)
   created_at DateTime  @default(now()) @db.Timestamptz(6)
   updated_at DateTime? @default(now()) @db.Timestamptz(6)
 
@@ -221,11 +235,11 @@ model ShowcasePlacement {
 }
 
 model GalleryCategory {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name       String
-  slug       String   @unique
-  sort_order Int      @default(999)
-  published  Boolean  @default(true)
+  slug       String    @unique
+  sort_order Int       @default(999)
+  published  Boolean   @default(true)
   created_at DateTime  @default(now()) @db.Timestamptz(6)
   updated_at DateTime? @default(now()) @db.Timestamptz(6)
 
@@ -235,12 +249,12 @@ model GalleryCategory {
 }
 
 model GalleryImage {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   title       String?
   image_url   String
-  category_id String?  @db.Uuid
-  sort_order  Int      @default(999)
-  published   Boolean  @default(true)
+  category_id String?   @db.Uuid
+  sort_order  Int       @default(999)
+  published   Boolean   @default(true)
   created_at  DateTime  @default(now()) @db.Timestamptz(6)
   updated_at  DateTime? @default(now()) @db.Timestamptz(6)
 
@@ -250,32 +264,33 @@ model GalleryImage {
 }
 
 model User {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email          String
-  password_hash  String
-  full_name      String?
-  role           UserRole  @default(EDITOR)
-  is_active      Boolean   @default(true)
-  last_login_at  DateTime? @db.Timestamptz(6)
-  created_at     DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime  @default(now()) @db.Timestamptz(6)
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String
+  password_hash String
+  full_name     String?
+  role          UserRole  @default(EDITOR)
+  is_active     Boolean   @default(true)
+  last_login_at DateTime? @db.Timestamptz(6)
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime  @default(now()) @db.Timestamptz(6)
 
-  refresh_tokens  RefreshToken[]
-  uploaded_media  MediaAsset[]
-  reviewed_drafts BlogAiDraft[]
+  refresh_tokens         RefreshToken[]
+  uploaded_media         MediaAsset[]
+  reviewed_drafts        BlogAiDraft[]
+  deleted_blog_schedules BlogDeletedSchedule[]
 
   @@map("users")
 }
 
 model RefreshToken {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  token_hash  String
-  user_id     String    @db.Uuid
-  expires_at  DateTime  @db.Timestamptz(6)
-  revoked_at  DateTime? @db.Timestamptz(6)
-  user_agent  String?
-  ip_address  String?
-  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  token_hash String
+  user_id    String    @db.Uuid
+  expires_at DateTime  @db.Timestamptz(6)
+  revoked_at DateTime? @db.Timestamptz(6)
+  user_agent String?
+  ip_address String?
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
 
   user User @relation(fields: [user_id], references: [id])
 
@@ -283,26 +298,26 @@ model RefreshToken {
 }
 
 model ContactLead {
-  id                 String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  full_name          String?
-  email              String?
-  phone              String?
-  company            String?
-  message            String?
-  source             String?
-  country            String?
-  role               String?
-  ghl_situation      String?
-  client_volume      String?
-  monthly_budget     String?
-  timeline           String?
-  biggest_challenge  String?
-  page_url           String?
-  status             LeadStatus @default(NEW)
-  notes              String?
-  submitted_at       DateTime   @default(now()) @db.Timestamptz(6)
-  created_at         DateTime   @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime   @default(now()) @db.Timestamptz(6)
+  id                String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  full_name         String?
+  email             String?
+  phone             String?
+  company           String?
+  message           String?
+  source            String?
+  country           String?
+  role              String?
+  ghl_situation     String?
+  client_volume     String?
+  monthly_budget    String?
+  timeline          String?
+  biggest_challenge String?
+  page_url          String?
+  status            LeadStatus @default(NEW)
+  notes             String?
+  submitted_at      DateTime   @default(now()) @db.Timestamptz(6)
+  created_at        DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime   @default(now()) @db.Timestamptz(6)
 
   @@map("contact_leads")
 }
@@ -376,7 +391,7 @@ model BlogAiSettings {
   review_window_minutes       Int      @default(20)
   image_generation_enabled    Boolean  @default(true)
   web_search_enabled          Boolean  @default(true)
-  min_seo_score                Int     @default(70)
+  min_seo_score               Int      @default(70)
   competitor_domains          String[] @default([])
   max_internal_links          Int      @default(3)
   blog_url_path               String   @default("/blog")
@@ -391,21 +406,21 @@ model BlogAiSettings {
 }
 
 model BlogAiAccount {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  provider        String
-  label           String
-  token           String
-  token_preview   String
-  model           String?
-  enabled         Boolean   @default(true)
-  status          String    @default("idle")
-  cooldown_until  DateTime? @db.Timestamptz(6)
-  done_count      Int       @default(0)
-  failed_count    Int       @default(0)
-  last_used_at    DateTime? @db.Timestamptz(6)
-  last_error      String?
-  created_at      DateTime  @default(now()) @db.Timestamptz(6)
-  auth_type       String    @default("oauth")
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider       String
+  label          String
+  token          String
+  token_preview  String
+  model          String?
+  enabled        Boolean   @default(true)
+  status         String    @default("idle")
+  cooldown_until DateTime? @db.Timestamptz(6)
+  done_count     Int       @default(0)
+  failed_count   Int       @default(0)
+  last_used_at   DateTime? @db.Timestamptz(6)
+  last_error     String?
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  auth_type      String    @default("oauth")
 
   @@map("blog_ai_accounts")
 }
@@ -429,34 +444,222 @@ model BlogAiRun {
 }
 
 model BlogAiDraft {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  run_id           String?   @db.Uuid
-  provider         String
-  title            String
-  slug             String
-  category         String
-  primary_keyword  String?
-  tags             String[]  @default([])
-  excerpt          String    @default("")
-  content          String
-  seo_title        String    @default("")
-  seo_description  String    @default("")
-  seo_keywords     String    @default("")
-  reading_time     Int?
-  cover_image      String?
-  cover_image_alt  String?
-  topic_research   Json?
-  status           String    @default("pending_review")
-  review_deadline  DateTime  @db.Timestamptz(6)
-  reviewed_by      String?   @db.Uuid
-  reviewed_at      DateTime? @db.Timestamptz(6)
-  checker_result   Json?
-  blog_post_id     String?   @db.Uuid
-  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  run_id          String?   @db.Uuid
+  provider        String
+  title           String
+  slug            String
+  category        String
+  primary_keyword String?
+  tags            String[]  @default([])
+  excerpt         String    @default("")
+  content         String
+  seo_title       String    @default("")
+  seo_description String    @default("")
+  seo_keywords    String    @default("")
+  reading_time    Int?
+  cover_image     String?
+  cover_image_alt String?
+  topic_research  Json?
+  status          String    @default("pending_review")
+  review_deadline DateTime  @db.Timestamptz(6)
+  reviewed_by     String?   @db.Uuid
+  reviewed_at     DateTime? @db.Timestamptz(6)
+  checker_result  Json?
+  blog_post_id    String?   @db.Uuid
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
 
   run              BlogAiRun? @relation(fields: [run_id], references: [id])
   reviewed_by_user User?      @relation(fields: [reviewed_by], references: [id])
   blog_post        BlogPost?  @relation(fields: [blog_post_id], references: [id])
 
   @@map("blog_ai_drafts")
+}
+
+// =============================================================================
+// Blog Writer (AI blog publishing, CLI-subscription based)
+// =============================================================================
+//
+// Replaces the BlogAiSettings/BlogAiAccount/BlogAiRun/BlogAiDraft feature
+// above — that code is deleted, but those 4 models and their tables are left
+// exactly as they are here on purpose. Dropping them is a separate, later,
+// explicitly-confirmed step (dump the data, show it, wait for "proceed") —
+// never bundled into this addition.
+//
+// A long-running watcher process (backend/scripts/blog-watch.mjs, not this
+// HTTP API) is the only writer of `status`/`phase` on BlogWriteRequest and
+// BlogRunSchedule, and only inside the single-flight claim transaction
+// (`SELECT ... FOR UPDATE SKIP LOCKED`, see that script). The API routes in
+// this app only ever INSERT a `pending` request or read history — they never
+// spawn the `claude` CLI and never flip these rows to `running` themselves.
+
+/**
+ * The topic queue an admin builds up, one-off or via a schedule.
+ */
+model BlogTopic {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title          String
+  target_keyword String?
+  category       String?
+  /**
+   * 'manual' (typed in by an admin) or 'schedule' (generated by a BlogRunSchedule tick).
+   */
+  source         String   @default("manual")
+  schedule_id    String?  @db.Uuid
+  /**
+   * 'keyword' (write straight from the title/keyword) or 'sources' (research and rank real headlines first).
+   */
+  research_mode  String   @default("keyword")
+  /**
+   * 'pending' | 'queued' | 'writing' | 'completed' | 'skipped'.
+   */
+  status         String   @default("pending")
+  skip_reason    String?
+  sort_order     Int      @default(0)
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  schedule       BlogRunSchedule?   @relation(fields: [schedule_id], references: [id], onDelete: SetNull)
+  write_requests BlogWriteRequest[]
+  posts          BlogPost[]
+
+  @@map("blog_topics")
+}
+
+/**
+ * One row per attempt to write a post — the run log the admin screen's phase
+ * list and history read from. `claim_next_write_request` in blog-watch.mjs
+ * is the only code path allowed to move a row from 'pending'/'waiting' to
+ * 'running'; everything else here is read-mostly.
+ */
+model BlogWriteRequest {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  topic_id      String?   @db.Uuid
+  schedule_id   String?   @db.Uuid
+  /**
+   * A request typed straight in without a saved BlogTopic row (a one-off "write about X").
+   */
+  ad_hoc_title  String?
+  /**
+   * 'pending' | 'running' | 'waiting' | 'completed' | 'failed'.
+   */
+  status        String    @default("pending")
+  /**
+   * 'reading_standard' | 'researching' | 'writing' | 'auditing' | 'images' | 'saving' — null until claimed.
+   */
+  phase         String?
+  /**
+   * Ordered timeline the UI's phase list renders: [{ phase, started_at, finished_at, note }, ...].
+   */
+  steps         Json      @default("[]")
+  retry_count   Int       @default(0)
+  /**
+   * Set when parked 'waiting' (usage-limit backoff or a >25min run) — the watcher won't reclaim it before this.
+   */
+  retry_after   DateTime? @db.Timestamptz(6)
+  error         String?
+  blog_post_id  String?   @db.Uuid
+  model_used    String?
+  input_tokens  Int?
+  output_tokens Int?
+  cost_usd      Decimal?  @db.Decimal(10, 4)
+  /**
+   * Hostname/pid of whichever watcher instance claimed this — debugging aid, not used for locking.
+   */
+  claimed_by    String?
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  started_at    DateTime? @db.Timestamptz(6)
+  finished_at   DateTime? @db.Timestamptz(6)
+  updated_at    DateTime  @default(now()) @db.Timestamptz(6)
+
+  topic     BlogTopic?       @relation(fields: [topic_id], references: [id], onDelete: SetNull)
+  schedule  BlogRunSchedule? @relation(fields: [schedule_id], references: [id], onDelete: SetNull)
+  blog_post BlogPost?        @relation(fields: [blog_post_id], references: [id], onDelete: SetNull)
+
+  @@map("blog_write_requests")
+}
+
+/**
+ * A recurring "write N posts a day from this keyword list" schedule.
+ */
+model BlogRunSchedule {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  label              String
+  hour               Int       @default(6)
+  minute             Int       @default(0)
+  /**
+   * 0 (Sunday) - 6 (Saturday); empty/null means every day.
+   */
+  days_of_week       Int[]     @default([])
+  keywords           String[]  @default([])
+  /**
+   * Where in `keywords` this schedule is currently up to — so a restart resumes instead of restarting the list.
+   */
+  next_keyword_index Int       @default(0)
+  posts_per_run      Int       @default(1)
+  research_mode      String    @default("keyword")
+  category           String?
+  enabled            Boolean   @default(true)
+  last_run_at        DateTime? @db.Timestamptz(6)
+  /**
+   * Date-only (midnight UTC) marker of the last day this fired — how the watcher guarantees it never fires twice in one day.
+   */
+  last_run_date      DateTime? @db.Date
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime  @default(now()) @db.Timestamptz(6)
+
+  topics         BlogTopic[]
+  write_requests BlogWriteRequest[]
+
+  @@map("blog_run_schedules")
+}
+
+/**
+ * A full snapshot of a BlogRunSchedule taken at the moment it's deleted —
+ * soft-delete-by-copy rather than a `deleted_at` column on the live table,
+ * so the schedule list query never has to filter deleted rows out and a
+ * deleted schedule can be inspected (or manually restored) later.
+ */
+model BlogDeletedSchedule {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  original_schedule_id String   @db.Uuid
+  snapshot             Json
+  deleted_by           String?  @db.Uuid
+  deleted_at           DateTime @default(now()) @db.Timestamptz(6)
+
+  deleted_by_user User? @relation(fields: [deleted_by], references: [id], onDelete: SetNull)
+
+  @@map("blog_deleted_schedules")
+}
+
+/**
+ * Single-row settings table — same pattern as BlogAiSettings above
+ * (id is a literal boolean `true`, enforcing exactly one row).
+ */
+model BlogWriterSettings {
+  id                   Boolean   @id @default(true)
+  auto_publish_enabled Boolean   @default(false)
+  default_model        String    @default("sonnet")
+  min_seo_score        Int       @default(70)
+  max_internal_links   Int       @default(3)
+  max_retries          Int       @default(6)
+  run_timeout_minutes  Int       @default(25)
+  style_rules          String    @default("Do not use em dashes. Write short, clear sentences aimed at a general reader. Avoid jargon. Prefer active voice.")
+  categories           String[]  @default(["GoHighLevel", "Automation", "AI Agents", "Case Studies", "Voice AI", "CRM", "Vibe Coding"])
+  competitor_domains   String[]  @default([])
+  // Written by blog-watch.mjs every ~15s while it's alive — the ONLY signal
+  // the admin badge's Online/Offline status uses (offline = no beat for 2min).
+  // Not a health check the API pings itself; a dead watcher just stops
+  // updating this and the badge ages out on its own.
+  last_heartbeat_at    DateTime? @db.Timestamptz(6)
+  last_heartbeat_host  String?
+  // Set by POST /blog-writer/stop, cleared by the watcher once it acts on it.
+  // Does NOT kill whatever is currently running — it only stops the tight
+  // "immediately claim the next one" chaining loop a batch/schedule uses, so
+  // the current post finishes normally and the next pending one waits for
+  // the following regular poll tick instead of firing right away.
+  stop_requested       Boolean   @default(false)
+  updated_at           DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@map("blog_writer_settings")
 }

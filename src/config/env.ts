@@ -36,24 +36,6 @@ const csv = (value: string): string[] =>
     .map((entry) => entry.trim())
     .filter(Boolean)
 
-/**
- * `@anthropic-ai/claude-code` / `@openai/codex` are real project
- * dependencies (not a global install) specifically so this backend can
- * deploy as a single persistent service — e.g. Railway — with no separate
- * VPS/worker needed. `npm install` puts their platform-appropriate binaries
- * in this project's own node_modules/.bin, which is what this points at by
- * default. (An earlier attempt bundled them for a Vercel *serverless
- * function* instead, which doesn't work — their binaries are ~210MB/~380MB,
- * well past Vercel's ~250MB function size limit. That's specific to
- * Vercel's function-size ceiling, not to bundling them as dependencies in
- * general — a normal persistent container has no such limit.) Override via
- * the per-install claude_cli_command / codex_cli_command settings if you
- * ever want to point at a different install instead.
- */
-function defaultCliPath(bin: 'claude' | 'codex'): string {
-  return path.join(ROOT_DIR, 'node_modules', '.bin', bin)
-}
-
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
@@ -63,15 +45,6 @@ const envSchema = z.object({
   // connection string. prisma.config.ts (CLI-only: generate/introspect/migrate)
   // reads the same var directly from process.env, so nothing else to set there.
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-
-  // --- Supabase Storage (optional — blogAi.images.ts's cover-image bucket) ---
-  // Postgres access no longer goes through Supabase at all (see DATABASE_URL
-  // above) — this is only for Supabase's Storage product, which has nothing to
-  // do with Postgres and has no Prisma equivalent. Deliberately optional, same
-  // soft pattern as Cloudinary below: left unset, generateCoverImage() just
-  // skips uploading and Auto Blog falls back to the placeholder cover image.
-  SUPABASE_URL: z.string().optional().default(''),
-  SUPABASE_SECRET_KEY: z.string().optional().default(''),
 
   JWT_ACCESS_SECRET: z.string().min(16, 'JWT_ACCESS_SECRET must be at least 16 characters'),
   JWT_REFRESH_SECRET: z.string().min(16, 'JWT_REFRESH_SECRET must be at least 16 characters'),
@@ -114,68 +87,24 @@ const envSchema = z.object({
   SEED_ADMIN_PASSWORD: z.string().min(8).default('Admin@12345'),
   SEED_ADMIN_NAME: z.string().default('GHL Prime Admin'),
 
-  // --- Auto Blog (AI blog publishing) ---------------------------------------
-  // AES-256-GCM key encrypting the Anthropic/OpenAI API keys admins add on the
-  // Auto Blog settings page. Must decode to exactly 32 raw bytes, hex-encoded.
-  // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-  TOKEN_ENCRYPTION_KEY: z
-    .string()
-    .regex(/^[0-9a-f]{64}$/i, 'TOKEN_ENCRYPTION_KEY must be 64 hex characters (32 bytes)'),
-
-  // --- Auto Blog admin alert emails (optional) -------------------------------
-  // Deliberately optional, same pattern as Cloudinary: the API must boot and
-  // run without these configured — alerts just no-op with a warning until
-  // they're filled in.
-  SMTP_HOST: z.string().optional().default(''),
-  SMTP_PORT: z.coerce.number().int().positive().default(587),
-  SMTP_SECURE: z.coerce.boolean().default(false),
-  SMTP_USER: z.string().optional().default(''),
-  SMTP_PASSWORD: z.string().optional().default(''),
-  SMTP_FROM: z.string().optional().default(''),
-  /** Comma-separated list of admin addresses that receive Auto Blog alerts. */
-  ADMIN_ALERT_EMAILS: z.string().optional().default(''),
-
-  // --- Auto Blog: CLI/subscription-based accounts (optional) -----------------
-  // Server-wide default binary paths for the `claude`/`codex` CLIs, used when
-  // an admin hasn't overridden them via the per-install claude_cli_command /
-  // codex_cli_command settings — see defaultCliPath() above.
-  CLAUDE_CLI_PATH: z.string().optional().default(defaultCliPath('claude')),
-  CODEX_CLI_PATH: z.string().optional().default(defaultCliPath('codex')),
-
-  // --- Auto Blog: public scheduler trigger (optional) -------------------------
-  // Shared secret for POST /blog-ai/cron/trigger — the ONE route in this app
-  // that's intentionally reachable with no admin JWT. Not required on a
-  // persistent host like Railway (the in-process poller in
-  // blogAi.scheduler.ts already handles the schedule on its own) — this
-  // exists as an optional extra/manual-test trigger reachable from outside
-  // the process. Left unset, that route always rejects with a clear message
-  // rather than the app refusing to boot.
-  BLOG_AI_CRON_SECRET: z.string().optional().default(''),
+  // --- Blog Writer (AI blog publishing, CLI-subscription based) ------------
+  // Stock photos for blog-import.ts. Deliberately optional, same pattern as
+  // Cloudinary above: without either key, posts simply get no cover image
+  // rather than the run failing.
+  PEXELS_API_KEY: z.string().optional().default(''),
+  UNSPLASH_ACCESS_KEY: z.string().optional().default(''),
+  /** The model the writing session uses when an admin hasn't overridden it in settings. */
+  BLOG_WRITER_MODEL: z.string().default('sonnet'),
+  /**
+   * Override for the `claude` binary blog-watch.ts spawns. Left unset, it
+   * resolves in order: this project's own node_modules/.bin/claude (a real
+   * dependency — see package.json) -> PATH -> ~/.local/bin -> the VS Code
+   * extension's bundled copy. See resolveClaudeBin() in blog-watch.ts.
+   */
+  CLAUDE_BIN: z.string().optional().default(''),
 })
 
 export type RawEnv = z.infer<typeof envSchema>
-
-/**
- * Catches a value whose placeholder was never filled in, e.g. `[YOUR-KEY]`.
- * Without this the server starts happily and fails later with an opaque 401
- * from PostgREST, which is a much worse place to discover the problem.
- */
-function assertNoPlaceholders(name: string, value: string | undefined): void {
-  if (!value) return
-
-  const placeholder = /\[([A-Z0-9_-]+)\]/i.exec(value)
-  if (!placeholder) return
-
-  console.error(
-    `\nInvalid environment configuration:\n` +
-      `  - ${name} still contains the placeholder "${placeholder[0]}".\n` +
-      `    Fill it in from the Supabase dashboard → Project Settings → API.\n`,
-  )
-  process.exit(1)
-}
-
-assertNoPlaceholders('SUPABASE_URL', process.env['SUPABASE_URL'])
-assertNoPlaceholders('SUPABASE_SECRET_KEY', process.env['SUPABASE_SECRET_KEY'])
 
 const parsed = envSchema.safeParse(process.env)
 
@@ -196,14 +125,8 @@ export interface AppEnv extends RawEnv {
   sitemapOutputDir: string
   /** True once Cloudinary credentials are present, in either supported form. */
   hasCloudinary: boolean
-  /** True once Supabase Storage credentials are present — otherwise Auto Blog cover images fall back to the placeholder URL. */
-  hasSupabaseStorage: boolean
   /** True when an unsigned upload preset is configured. */
   hasUploadPreset: boolean
-  /** True once SMTP is configured — otherwise Auto Blog alert emails no-op with a warning. */
-  hasSmtp: boolean
-  /** Parsed ADMIN_ALERT_EMAILS. */
-  adminAlertEmails: string[]
   /** The limit actually enforced — clamped below the platform cap on serverless. */
   effectiveMaxUploadMb: number
   maxUploadBytes: number
@@ -238,9 +161,6 @@ const hasCloudinary = Boolean(
     raw.CLOUDINARY_URL.startsWith('cloudinary://'),
 )
 
-const hasSmtp = Boolean(raw.SMTP_HOST && raw.SMTP_USER && raw.SMTP_PASSWORD)
-const hasSupabaseStorage = Boolean(raw.SUPABASE_URL && raw.SUPABASE_SECRET_KEY)
-
 export const env: AppEnv = {
   ...raw,
   isProduction: raw.NODE_ENV === 'production',
@@ -251,9 +171,6 @@ export const env: AppEnv = {
     ? raw.SITEMAP_OUTPUT_DIR
     : path.resolve(ROOT_DIR, raw.SITEMAP_OUTPUT_DIR),
   hasCloudinary,
-  hasSupabaseStorage,
-  hasSmtp,
-  adminAlertEmails: csv(raw.ADMIN_ALERT_EMAILS),
   hasUploadPreset: Boolean(raw.CLOUDINARY_UPLOAD_PRESET),
   effectiveMaxUploadMb,
   maxUploadBytes: Math.round(effectiveMaxUploadMb * 1024 * 1024),
