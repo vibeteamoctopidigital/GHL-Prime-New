@@ -7,7 +7,7 @@ import authRoutes from '../modules/auth/auth.routes.js'
 import dashboardRoutes from '../modules/dashboard/dashboard.routes.js'
 import caseStudyRoutes from '../modules/case-studies/caseStudy.routes.js'
 import blogRoutes from '../modules/blog/blog.routes.js'
-import blogAiRoutes from '../modules/blog-ai/blogAi.routes.js'
+import blogWriterRoutes from '../modules/blog-writer/blogWriter.routes.js'
 import teamRoutes from '../modules/team/team.routes.js'
 import galleryRoutes from '../modules/gallery/gallery.routes.js'
 import meetingGalleryRoutes from '../modules/meeting-gallery/meetingGallery.routes.js'
@@ -35,13 +35,7 @@ const routes: RouteDefinition[] = [
   { path: '/dashboard', router: dashboardRoutes, description: 'Admin dashboard counts and recent activity' },
   { path: '/case-studies', router: caseStudyRoutes, description: 'Case studies and team credits' },
   { path: '/blog', router: blogRoutes, description: 'Blog posts, categories and related posts' },
-  { path: '/blog-ai', router: blogAiRoutes, description: 'Auto Blog: AI generation settings, provider accounts and run history' },
-  // Compatibility alias: the existing admin dashboard's Auto Blog page was built
-  // against the old CLI-based backend's route prefix (/api/admin/blog-ai/*, see
-  // ghlprime-stg-3/server/src/routes/blogAi.js). Mounting the SAME router here
-  // too (not a copy — identical auth/handlers) means the current frontend build
-  // keeps working without a redeploy, alongside the new documented /api/blog-ai path.
-  { path: '/admin/blog-ai', router: blogAiRoutes, description: 'Alias of /blog-ai for the existing admin dashboard build' },
+  { path: '/blog-writer', router: blogWriterRoutes, description: 'Blog Writer: topic queue, schedules and run history for the CLI-subscription-based writer' },
   { path: '/team', router: teamRoutes, description: 'Leadership profiles and "Meet The Experts"' },
   { path: '/gallery', router: galleryRoutes, description: 'Gallery categories and images' },
   { path: '/meeting-gallery', router: meetingGalleryRoutes, description: 'Homepage meeting image strip' },

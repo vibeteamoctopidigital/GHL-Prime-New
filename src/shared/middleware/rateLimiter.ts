@@ -41,17 +41,4 @@ export const submissionLimiter = build({
   message: 'Too many submissions. Please try again later.',
 })
 
-/**
- * The Auto Blog cron trigger (POST /blog-ai/cron/trigger) is secret-protected
- * but still a public, unauthenticated-by-session URL — defense in depth
- * against the secret being guessed/leaked, on top of the secret check itself.
- * An external scheduler pinging every 5-15 minutes needs nowhere near this
- * many requests/hour.
- */
-export const cronTriggerLimiter = build({
-  max: 30,
-  windowMs: 60 * 60 * 1000,
-  message: 'Too many requests to the cron trigger endpoint.',
-})
-
 export default apiLimiter
