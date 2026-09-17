@@ -8,6 +8,7 @@ import dashboardRoutes from '../modules/dashboard/dashboard.routes.js'
 import caseStudyRoutes from '../modules/case-studies/caseStudy.routes.js'
 import blogRoutes from '../modules/blog/blog.routes.js'
 import blogWriterRoutes from '../modules/blog-writer/blogWriter.routes.js'
+import claudeAuthRoutes from '../modules/claude-auth/claudeAuth.routes.js'
 import teamRoutes from '../modules/team/team.routes.js'
 import galleryRoutes from '../modules/gallery/gallery.routes.js'
 import meetingGalleryRoutes from '../modules/meeting-gallery/meetingGallery.routes.js'
@@ -36,6 +37,7 @@ const routes: RouteDefinition[] = [
   { path: '/case-studies', router: caseStudyRoutes, description: 'Case studies and team credits' },
   { path: '/blog', router: blogRoutes, description: 'Blog posts, categories and related posts' },
   { path: '/blog-writer', router: blogWriterRoutes, description: 'Blog Writer: topic queue, schedules and run history for the CLI-subscription-based writer' },
+  { path: '/claude-auth', router: claudeAuthRoutes, description: 'Claude account manager: status, dashboard-driven login (setup-token), logout for the Blog Writer CLI' },
   { path: '/team', router: teamRoutes, description: 'Leadership profiles and "Meet The Experts"' },
   { path: '/gallery', router: galleryRoutes, description: 'Gallery categories and images' },
   { path: '/meeting-gallery', router: meetingGalleryRoutes, description: 'Homepage meeting image strip' },
