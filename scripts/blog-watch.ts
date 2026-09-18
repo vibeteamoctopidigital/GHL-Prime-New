@@ -68,6 +68,19 @@ process.on('SIGINT', () => shutdown('SIGINT'))
 function resolveClaudeBin(): string {
   if (env.CLAUDE_BIN) return env.CLAUDE_BIN
 
+  // On Windows, node_modules/.bin/claude.cmd is a batch wrapper around this
+  // real .exe one level up. Resolving straight to the .exe lets spawn() run
+  // it directly with an argv array (no shell involved), which sidesteps two
+  // problems a .cmd wrapper brings: needing `shell: true` at all, and that
+  // option's own documented flaw (Node's DEP0190) of concatenating array
+  // args into a single command-line string instead of passing each one
+  // through literally — that mangling silently ate the `-p` prompt on a
+  // real run here, so the exe path isn't just a nicety.
+  if (process.platform === 'win32') {
+    const exe = path.join(ROOT_DIR, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe')
+    if (existsSync(exe)) return exe
+  }
+
   const bundled = path.join(ROOT_DIR, 'node_modules', '.bin', process.platform === 'win32' ? 'claude.cmd' : 'claude')
   if (existsSync(bundled)) return bundled
 
@@ -140,7 +153,18 @@ function runClaudeSession(requestId: string, timeoutMs: number): Promise<RunResu
         '--permission-mode', 'bypassPermissions',
         '--permission-prompts', 'none',
       ],
-      { cwd: ROOT_DIR, env: process.env },
+      {
+        cwd: ROOT_DIR,
+        env: process.env,
+        // Only the .cmd/.bat fallback in resolveClaudeBin() needs a shell to
+        // run at all (spawn() can't exec a batch file directly on Windows —
+        // fails immediately with "spawn EINVAL"). The normal case, the
+        // resolved .exe or a POSIX binary, must NOT set this: shell:true
+        // concatenates the args array into one command-line string instead
+        // of passing each element through literally, which silently
+        // mangled the `-p` prompt (containing spaces) on a real run here.
+        shell: /\.(cmd|bat)$/i.test(bin),
+      },
     )
     currentChild = child
 
@@ -243,6 +267,7 @@ async function processClaimedRequest(requestId: string, settings: BlogWriterSett
   })
 
   logger.warn(`Blog Writer: request ${requestId} parked waiting (${reason}) — retry #${nextRetryCount} at ${retryAfter.toISOString()}`)
+  logger.warn(`Blog Writer: raw session output for ${requestId}:\n${result.output}`)
 }
 
 // ---------------------------------------------------------------------------
