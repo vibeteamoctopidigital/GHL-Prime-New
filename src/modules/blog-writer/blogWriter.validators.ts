@@ -1,56 +1,115 @@
 import { z } from 'zod'
-
-/** Matches BlogWriterSettings.categories' own default list, but isn't enforced as an enum — an admin's custom category should never be a validation error. */
-export const createTopicSchema = z.object({
-  title: z.string().trim().min(3, 'Topic needs at least 3 characters').max(200),
-  target_keyword: z.string().trim().max(200).optional(),
-  category: z.string().trim().max(100).optional(),
-  research_mode: z.enum(['keyword', 'sources']).optional().default('keyword'),
-})
+import { TOPIC_STATUSES } from './lib/rules.js'
 
 /**
- * "Write next post" from the queue's top item, or an ad-hoc one-off typed
- * straight into the box. Exactly one of the two must be present — a request
- * always needs *something* to write about.
+ * Request shapes for /api/blog-writer. Loose on purpose where octopi's routes
+ * were loose: counts are clamped by the service rather than rejected here
+ * (a slider pushed too far is not a mistake worth an error message), while
+ * things that would silently do the wrong thing — an unknown CTA id, a
+ * malformed time — are rejected by the service with a message.
  */
-export const createWriteRequestSchema = z
+
+const optionalTrimmed = z.string().trim().optional()
+
+/** A number, or null to clear an override. Absent means "not sent". */
+const nullableNumber = z.number().nullable().optional()
+
+export const createTopicSchema = z.object({
+  topic: z.string().trim().min(1, 'A topic is required.'),
+  notes: optionalTrimmed,
+  imageCount: z.number().optional(),
+  words: z.number().optional(),
+  ctaVariant: optionalTrimmed,
+})
+
+export const bulkTopicsSchema = z.object({
+  topics: z.array(z.string()).min(1, 'Nothing to add.'),
+})
+
+export const updateTopicSchema = z.object({
+  topic: optionalTrimmed,
+  notes: optionalTrimmed,
+  imageCount: nullableNumber,
+  words: nullableNumber,
+  ctaVariant: optionalTrimmed,
+  status: z.enum(TOPIC_STATUSES).optional(),
+  skipReason: optionalTrimmed,
+})
+
+export const reorderSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1, 'No order given.'),
+})
+
+export const defaultsSchema = z.object({
+  postsPerRun: z.unknown(),
+  imageCount: z.unknown(),
+  words: z.unknown(),
+  ctaVariant: z.unknown(),
+  autoPublish: z.unknown(),
+})
+
+export const importSheetSchema = z.object({
+  url: z.string().trim().min(1, 'A sheet link is required.'),
+  scheduleId: z.string().uuid().optional(),
+})
+
+export const requestWriteSchema = z
   .object({
-    topic_id: z.string().uuid().optional(),
-    ad_hoc_title: z.string().trim().min(3).max(200).optional(),
+    topicId: z.string().uuid().optional(),
+    all: z.boolean().optional(),
   })
-  .refine((data) => Boolean(data.topic_id || data.ad_hoc_title), {
-    message: 'Provide either topic_id or ad_hoc_title',
-    path: ['topic_id'],
+  .default({})
+
+export const createScheduleSchema = z
+  .object({
+    name: optionalTrimmed,
+    enabled: z.boolean().optional(),
+    mode: z.unknown().optional(),
+    time: z.unknown().optional(),
+    timezone: z.unknown().optional(),
+    postsPerDay: z.unknown().optional(),
   })
+  .default({})
 
-export const listRequestsQuerySchema = z.object({
-  status: z.enum(['pending', 'running', 'waiting', 'completed', 'failed']).optional(),
-  limit: z.coerce.number().int().positive().max(100).optional().default(30),
-  cursor: z.string().uuid().optional(),
+const siteInputSchema = z.object({
+  url: z.string(),
+  notes: z.string().optional(),
+  enabled: z.boolean().optional(),
+  lastUsedAt: z.string().nullable().optional(),
+  lastScan: z.unknown().optional(),
 })
 
-export const createScheduleSchema = z.object({
-  label: z.string().trim().min(1).max(200),
-  hour: z.coerce.number().int().min(0).max(23).optional().default(6),
-  minute: z.coerce.number().int().min(0).max(59).optional().default(0),
-  days_of_week: z.array(z.coerce.number().int().min(0).max(6)).optional().default([]),
-  keywords: z.array(z.string().trim().min(1)).min(1, 'Add at least one keyword'),
-  posts_per_run: z.coerce.number().int().positive().max(20).optional().default(1),
-  research_mode: z.enum(['keyword', 'sources']).optional().default('keyword'),
-  category: z.string().trim().max(100).optional(),
-  enabled: z.boolean().optional().default(true),
+export const updateScheduleSchema = z.object({
+  name: z.string().optional(),
+  enabled: z.boolean().optional(),
+  postsPerRun: z.unknown().optional(),
+  postsPerDay: z.unknown().optional(),
+  imageCount: z.unknown().optional(),
+  words: z.unknown().optional(),
+  ctaVariant: z.unknown().optional(),
+  sheetUrl: z.unknown().optional(),
+  mode: z.unknown().optional(),
+  time: z.unknown().optional(),
+  timezone: z.unknown().optional(),
+  sites: z.array(siteInputSchema).optional(),
 })
 
-export const updateScheduleSchema = createScheduleSchema.partial()
-
-export const updateSettingsSchema = z.object({
-  auto_publish_enabled: z.boolean().optional(),
-  default_model: z.string().trim().min(1).optional(),
-  min_seo_score: z.coerce.number().int().min(0).max(100).optional(),
-  max_internal_links: z.coerce.number().int().min(0).max(20).optional(),
-  max_retries: z.coerce.number().int().min(0).max(20).optional(),
-  run_timeout_minutes: z.coerce.number().int().min(1).max(120).optional(),
-  style_rules: z.string().trim().optional(),
-  categories: z.array(z.string().trim().min(1)).optional(),
-  competitor_domains: z.array(z.string().trim().min(1)).optional(),
+export const keywordPageQuerySchema = z.object({
+  skip: z.coerce.number().int().min(0).default(0),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
 })
+
+export const addKeywordsSchema = z.object({
+  topics: z.string().min(1, 'Nothing to add.'),
+  splitCommas: z.boolean().optional(),
+})
+
+export const transferSchema = z
+  .object({
+    scheduleId: optionalTrimmed,
+    name: optionalTrimmed,
+    time: z.unknown().optional(),
+    timezone: z.unknown().optional(),
+    postsPerDay: z.unknown().optional(),
+  })
+  .default({})

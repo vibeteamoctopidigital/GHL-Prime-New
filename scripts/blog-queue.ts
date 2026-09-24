@@ -1,228 +1,135 @@
 /**
- * The DB plumbing a spawned writer session calls throughout one run — it has
- * no other way to touch Postgres (it isn't handed a connection string or API
- * token, only these scripts). blog-watch.mjs does exactly one thing to this
- * data itself (the claim transaction that flips a row to 'running'); every
- * update after that point comes from the session calling this script.
+ * Print the blog queue, for the writing workflow to read.
  *
- * Usage (invoked via `npx tsx scripts/blog-queue.ts <command> ...args`):
+ * The queue lives in Postgres so the dashboard can edit it, and this is how
+ * the writer gets at it. A command rather than a direct query because the
+ * writer runs under a scoped tool allowlist: one named script it may run is a
+ * much smaller grant than the shell access an ad-hoc query would need.
  *
- *   get <request_id>
- *     Prints { request, topic } as JSON — what to write about.
- *
- *   phase <request_id> <phase> [note]
- *     phase is one of: reading_standard | researching | writing | auditing |
- *     images | saving. Appends { phase, at, note } to the request's `steps`
- *     timeline — this is what the admin UI's phase list actually reads.
- *
- *   save <request_id> <draft.json> <audit_passed:true|false>
- *     Creates the BlogPost row and marks the request + topic completed.
- *     draft.json shape: { title, slug?, category, tags?, excerpt?,
- *     cover_image?, reading_time?, content, seo_title?, seo_description?,
- *     seo_keywords?, target_keyword?, cta_variant?, sources?, source_url?,
- *     source_name? }. Publishing (vs. saving a draft) is decided HERE, from
- *     BlogWriterSettings.auto_publish_enabled AND audit_passed — never by
- *     the session's own judgment call.
- *
- *   fail <request_id> <reason>
- *     Marks the request failed and its topic skipped with the same reason.
+ *   npm run blog:queue            plain text
+ *   npm run blog:queue -- --json  machine-readable
  */
-import { readFileSync } from 'node:fs'
 import prisma, { disconnectDatabase } from '../src/config/prisma.js'
-import sitemapService from '../src/modules/sitemap/sitemap.service.js'
-import logger from '../src/shared/utils/logger.js'
+import { getQueueDefaults } from '../src/modules/blog-writer/blogWriter.store.js'
+import { RANDOM_CTA_VARIANT, resolveCtaVariant } from '../src/modules/blog-writer/lib/cta-variants.js'
+import { BLOG_CATEGORIES, resolveTopicSettings } from '../src/modules/blog-writer/lib/rules.js'
+import { SERVICE_PAGES } from '../src/modules/blog-writer/lib/site.js'
 
-type Phase = 'reading_standard' | 'researching' | 'writing' | 'auditing' | 'images' | 'saving'
-
-interface DraftInput {
-  title: string
-  slug?: string
-  category: string
-  tags?: string[]
-  author?: string
-  excerpt?: string
-  cover_image?: string
-  reading_time?: number
-  content: string
-  seo_title?: string
-  seo_description?: string
-  seo_keywords?: string
-  target_keyword?: string
-  cta_variant?: string
-  sources?: Array<{ url: string; name?: string }>
-  research_mode?: string
-  source_url?: string
-  source_name?: string
-}
-
-function slugify(title: string): string {
-  return title
-    .toLowerCase()
+/** Titles may carry HTML; a link label is plain text. */
+function plain(value: string): string {
+  return value
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&(nbsp|amp|lt|gt|quot|#39);/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '')
 }
 
-/** Appends -2, -3, ... until the slug is free — a topic like "GHL Setup Guide" recurring over time must never collide silently. */
-async function uniqueSlug(base: string): Promise<string> {
-  let candidate = base
-  let n = 2
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const existing = await prisma.blogPost.findUnique({ where: { slug: candidate }, select: { id: true } })
-    if (!existing) return candidate
-    candidate = `${base}-${n}`
-    n += 1
+/**
+ * How many of each kind to print. Services are never truncated: they are
+ * what the posts exist to sell. The other two grow without limit and every
+ * line here is context the writer carries for the whole run.
+ */
+const MAX_CASE_STUDIES = 8
+const MAX_POSTS = 12
+
+/**
+ * Our own pages a post is allowed to link to.
+ *
+ * The workflow requires three to six internal links and forbids inventing a
+ * URL, so this list is the whole of what it may choose from. Without it the
+ * writer is asked for links, given nothing to pick, and correctly writes none.
+ */
+async function loadInternalLinks(): Promise<{ label: string; url: string }[]> {
+  const [caseStudies, posts] = await Promise.all([
+    prisma.caseStudy.findMany({
+      where: { published: true },
+      select: { slug: true, title: true },
+      orderBy: { created_at: 'desc' },
+      take: MAX_CASE_STUDIES,
+    }),
+    prisma.blogPost.findMany({
+      where: { published: true },
+      select: { slug: true, title: true },
+      orderBy: { published_at: 'desc' },
+      take: MAX_POSTS,
+    }),
+  ])
+
+  const links: { label: string; url: string }[] = SERVICE_PAGES.map((page) => ({ label: page.label, url: page.url }))
+
+  for (const study of caseStudies) {
+    if (!study.slug) continue
+    links.push({ label: plain(study.title || study.slug), url: `/case-studies/${study.slug}` })
   }
-}
-
-async function cmdGet(requestId: string): Promise<void> {
-  const request = await prisma.blogWriteRequest.findUnique({
-    where: { id: requestId },
-    include: { topic: true, schedule: true },
-  })
-  if (!request) throw new Error(`Request ${requestId} not found`)
-
-  console.log(JSON.stringify({ request, topic: request.topic }, null, 2))
-}
-
-async function cmdPhase(requestId: string, phase: string, note?: string): Promise<void> {
-  const valid: Phase[] = ['reading_standard', 'researching', 'writing', 'auditing', 'images', 'saving']
-  if (!valid.includes(phase as Phase)) {
-    throw new Error(`Unknown phase "${phase}" — expected one of ${valid.join(', ')}`)
-  }
-
-  const request = await prisma.blogWriteRequest.findUnique({ where: { id: requestId } })
-  if (!request) throw new Error(`Request ${requestId} not found`)
-
-  const steps = Array.isArray(request.steps) ? (request.steps as unknown[]) : []
-  steps.push({ phase, at: new Date().toISOString(), note: note ?? null })
-
-  await prisma.blogWriteRequest.update({
-    where: { id: requestId },
-    data: { phase, steps: steps as never },
-  })
-
-  console.log(`OK phase=${phase}`)
-}
-
-async function cmdSave(requestId: string, draftPath: string, auditPassedRaw: string): Promise<void> {
-  const auditPassed = auditPassedRaw === 'true'
-  const draft = JSON.parse(readFileSync(draftPath, 'utf8')) as DraftInput
-
-  const request = await prisma.blogWriteRequest.findUnique({ where: { id: requestId } })
-  if (!request) throw new Error(`Request ${requestId} not found`)
-  if (request.status !== 'running') {
-    throw new Error(`Request ${requestId} is "${request.status}", not "running" — refusing to save (was it already claimed by another run?)`)
+  for (const post of posts) {
+    if (!post.slug) continue
+    links.push({ label: plain(post.title || post.slug), url: `/blog/${post.slug}` })
   }
 
-  const settings = await prisma.blogWriterSettings.upsert({
-    where: { id: true },
-    update: {},
-    create: { id: true },
-  })
-
-  const shouldPublish = settings.auto_publish_enabled && auditPassed
-  const slug = await uniqueSlug(slugify(draft.slug ?? draft.title))
-
-  const post = await prisma.$transaction(async (tx) => {
-    const created = await tx.blogPost.create({
-      data: {
-        slug,
-        title: draft.title,
-        category: draft.category,
-        tags: draft.tags ?? [],
-        author: draft.author,
-        excerpt: draft.excerpt,
-        cover_image: draft.cover_image,
-        reading_time: draft.reading_time,
-        content: draft.content,
-        seo_title: draft.seo_title,
-        seo_description: draft.seo_description,
-        seo_keywords: draft.seo_keywords,
-        published: shouldPublish,
-        published_at: shouldPublish ? new Date() : null,
-        target_keyword: draft.target_keyword,
-        cta_variant: draft.cta_variant,
-        sources: draft.sources as never,
-        research_mode: draft.research_mode,
-        source_url: draft.source_url,
-        source_name: draft.source_name,
-        topic_id: request.topic_id,
-      },
-    })
-
-    await tx.blogWriteRequest.update({
-      where: { id: requestId },
-      data: { status: 'completed', phase: 'saving', blog_post_id: created.id, finished_at: new Date() },
-    })
-
-    if (request.topic_id) {
-      await tx.blogTopic.update({ where: { id: request.topic_id }, data: { status: 'completed' } })
-    }
-
-    return created
-  })
-
-  if (shouldPublish) {
-    try {
-      await sitemapService.refresh()
-    } catch (error) {
-      // A sitemap refresh failure must never undo an already-saved, already-
-      // published post — log it and move on, same as any other best-effort
-      // side effect elsewhere in this app (see server.ts's boot-time
-      // scheduler init for the same pattern).
-      logger.error('Blog Writer: post published but sitemap refresh failed:', error)
-    }
-  }
-
-  console.log(JSON.stringify({ ok: true, post_id: post.id, slug: post.slug, published: shouldPublish }))
+  return links.filter((link) => link.label)
 }
 
-async function cmdFail(requestId: string, reason: string): Promise<void> {
-  const request = await prisma.blogWriteRequest.findUnique({ where: { id: requestId } })
-  if (!request) throw new Error(`Request ${requestId} not found`)
+async function main(): Promise<void> {
+  const asJson = process.argv.includes('--json')
 
-  await prisma.$transaction(async (tx) => {
-    await tx.blogWriteRequest.update({
-      where: { id: requestId },
-      data: { status: 'failed', error: reason, finished_at: new Date() },
-    })
+  const [rows, defaults, internalLinks] = await Promise.all([
+    prisma.blogTopic.findMany({ where: { status: 'queued' }, orderBy: [{ order: 'asc' }, { created_at: 'asc' }] }),
+    getQueueDefaults(),
+    loadInternalLinks(),
+  ])
 
-    if (request.topic_id) {
-      await tx.blogTopic.update({
-        where: { id: request.topic_id },
-        data: { status: 'skipped', skip_reason: reason },
-      })
+  // Resolved here rather than left to the caller, so the writer is handed the
+  // settings a topic actually runs with and never has to merge them itself.
+  const topics = rows.map((row) => {
+    const settings = resolveTopicSettings(
+      { imageCount: row.image_count, words: row.words, ctaVariant: row.cta_variant },
+      defaults,
+    )
+    return {
+      id: row.id,
+      topic: row.topic,
+      kind: row.kind,
+      notes: row.notes,
+      ...settings,
+      // Resolved per topic, so "random" genuinely differs post to post.
+      ctaVariant: resolveCtaVariant(settings.ctaVariant),
     }
   })
 
-  console.log('OK failed')
-}
-
-const [, , command, ...args] = process.argv
-
-try {
-  switch (command) {
-    case 'get':
-      await cmdGet(args[0]!)
-      break
-    case 'phase':
-      await cmdPhase(args[0]!, args[1]!, args[2])
-      break
-    case 'save':
-      await cmdSave(args[0]!, args[1]!, args[2]!)
-      break
-    case 'fail':
-      await cmdFail(args[0]!, args.slice(1).join(' '))
-      break
-    default:
-      console.error('Usage: blog-queue.ts <get|phase|save|fail> ...args')
-      process.exitCode = 1
+  if (asJson) {
+    console.log(JSON.stringify({ defaults, categories: BLOG_CATEGORIES, topics, internalLinks }, null, 2))
+    return
   }
-} catch (error) {
-  console.error('blog-queue failed:', error instanceof Error ? error.message : error)
-  process.exitCode = 1
-} finally {
-  await disconnectDatabase()
+
+  console.log(`posts per run: ${defaults.postsPerRun}`)
+  console.log(`default images: ${defaults.imageCount}`)
+  console.log(`default words: ${defaults.words}`)
+  console.log(
+    `default cta: ${defaults.ctaVariant}${defaults.ctaVariant === RANDOM_CTA_VARIANT ? ' (a different banner per post)' : ''}`,
+  )
+  console.log(`auto-publish: ${defaults.autoPublish ? 'on (clean drafts go live)' : 'off'}`)
+  console.log(`categories (pick exactly one per post): ${BLOG_CATEGORIES.join(', ')}`)
+  console.log(`\n${topics.length} queued\n`)
+  topics.forEach((topic, i) => {
+    console.log(`${i + 1}. [${topic.kind}] ${topic.topic}`)
+    console.log(`   images: ${topic.imageCount} | words: ${topic.words} | cta: ${topic.ctaVariant} | id: ${topic.id}`)
+    if (topic.notes) console.log(`   notes: ${topic.notes}`)
+  })
+  if (topics.length === 0) console.log('(nothing queued)')
+
+  console.log('\ninternal links — our own pages, the ONLY ones a post may link to.')
+  console.log('Copy a path exactly as written. Never guess one that is not here.\n')
+  for (const link of internalLinks) console.log(`   ${link.url}  —  ${link.label}`)
+  if (internalLinks.length === 0) {
+    console.log('   (none found — services, case studies and posts all came back empty)')
+  }
 }
+
+main()
+  .catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error)
+    process.exitCode = 1
+  })
+  .finally(async () => {
+    await disconnectDatabase()
+  })

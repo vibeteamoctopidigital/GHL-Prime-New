@@ -1,127 +1,47 @@
 /**
- * Audits a draft before it's saved. The spawned writer session runs this
- * itself and passes the result to `blog-queue.ts save` — auto-publish only
- * ever happens when this comes back passed=true AND the admin has
- * auto_publish_enabled on (that second check happens in blog-queue.ts, not
- * here — this script only ever judges the draft, never the setting).
+ * Audit a draft against the writing standard.
  *
- *   npx tsx scripts/blog-audit.ts <draft.json>
+ *   npm run blog:audit content/drafts/<slug>.json
  *
- * Prints { passed, score, issues: string[] } as JSON. `passed` requires both
- * score >= min_seo_score AND zero hard-fail issues (a banned phrase or a
- * competitor-domain link fails regardless of score).
+ * Prints every finding, then "N error(s), M warning(s)". Exits non-zero when
+ * there are errors, which is what lets the workflow refuse to import a draft
+ * that breaks a hard rule. The same checks gate auto-publish in the importer.
  */
-import { readFileSync } from 'node:fs'
-import prisma, { disconnectDatabase } from '../src/config/prisma.js'
-
-interface DraftInput {
-  title: string
-  category?: string
-  content: string
-  seo_title?: string
-  seo_description?: string
-  target_keyword?: string
-}
-
-const BANNED_PHRASES = [
-  '—', // em dash
-  'in today\'s fast-paced world',
-  'in conclusion',
-  'in the ever-evolving',
-  'unlock the power of',
-]
-
-/** Counts <a href="..."> and markdown [text](url) links pointing at ghlprime.com or a relative path — the ones max_internal_links caps. */
-function countInternalLinks(content: string): number {
-  const htmlLinks = content.match(/<a\s+[^>]*href=["']([^"']+)["']/gi) ?? []
-  const mdLinks = content.match(/\]\((\/[^)]*|https?:\/\/[^)]*ghlprime\.com[^)]*)\)/gi) ?? []
-
-  const htmlInternal = htmlLinks.filter((tag) => /href=["'](\/|https?:\/\/[^"']*ghlprime\.com)/i.test(tag))
-  return htmlInternal.length + mdLinks.length
-}
-
-function findCompetitorLinks(content: string, competitorDomains: string[]): string[] {
-  if (!competitorDomains.length) return []
-  return competitorDomains.filter((domain) => content.toLowerCase().includes(domain.toLowerCase()))
-}
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { audit } from '../src/modules/blog-writer/lib/audit.js'
 
 async function main(): Promise<void> {
-  const draftPath = process.argv[2]
-  if (!draftPath) throw new Error('Usage: blog-audit.ts <draft.json>')
-
-  const draft = JSON.parse(readFileSync(draftPath, 'utf8')) as DraftInput
-  const settings = await prisma.blogWriterSettings.upsert({
-    where: { id: true },
-    update: {},
-    create: { id: true },
-  })
-
-  const issues: string[] = []
-  let hardFail = false
-  let score = 100
-
-  if (!draft.title || draft.title.trim().length < 10) {
-    issues.push('Title is missing or too short')
-    score -= 20
+  const file = process.argv[2]
+  if (!file) {
+    console.error('Usage: npm run blog:audit content/drafts/<slug>.json')
+    process.exit(2)
   }
 
-  const wordCount = draft.content.replace(/<[^>]*>/g, ' ').trim().split(/\s+/).filter(Boolean).length
-  if (wordCount < 400) {
-    issues.push(`Content is only ${wordCount} words — too thin to be useful`)
-    score -= 25
+  const full = path.resolve(process.cwd(), file)
+  let draft: Record<string, unknown>
+  try {
+    draft = JSON.parse(await readFile(full, 'utf8')) as Record<string, unknown>
+  } catch (error) {
+    console.error(`${file}: not valid JSON — ${(error as Error).message}`)
+    process.exit(2)
   }
 
-  for (const phrase of BANNED_PHRASES) {
-    if (draft.content.toLowerCase().includes(phrase.toLowerCase())) {
-      issues.push(`Contains a banned phrase/character: "${phrase}"`)
-      hardFail = true
-    }
-  }
+  const findings = audit(draft)
+  const errors = findings.filter((finding) => finding.level === 'error')
+  const warnings = findings.filter((finding) => finding.level === 'warn')
 
-  if (draft.target_keyword) {
-    const kw = draft.target_keyword.toLowerCase()
-    if (!draft.title.toLowerCase().includes(kw)) {
-      issues.push('Target keyword does not appear in the title')
-      score -= 10
-    }
-    if (!draft.content.toLowerCase().includes(kw)) {
-      issues.push('Target keyword does not appear in the body')
-      score -= 10
-    }
+  console.log(`${path.basename(full)}\n`)
+  for (const finding of findings) {
+    console.log(`  ${finding.level === 'error' ? 'ERROR' : 'warn '}  ${finding.check}: ${finding.detail}`)
   }
+  if (findings.length === 0) console.log('  clean')
 
-  if (draft.seo_title && draft.seo_title.length > 60) {
-    issues.push(`seo_title is ${draft.seo_title.length} characters, over the 60 limit`)
-    score -= 5
-  }
-  if (draft.seo_description && draft.seo_description.length > 155) {
-    issues.push(`seo_description is ${draft.seo_description.length} characters, over the 155 limit`)
-    score -= 5
-  }
-
-  const internalLinks = countInternalLinks(draft.content)
-  if (internalLinks > settings.max_internal_links) {
-    issues.push(`${internalLinks} internal links found, over the configured max of ${settings.max_internal_links}`)
-    score -= 10
-  }
-
-  const competitorHits = findCompetitorLinks(draft.content, settings.competitor_domains)
-  if (competitorHits.length) {
-    issues.push(`Links to configured competitor domain(s): ${competitorHits.join(', ')}`)
-    hardFail = true
-  }
-
-  score = Math.max(0, Math.min(100, score))
-  const passed = !hardFail && score >= settings.min_seo_score
-
-  console.log(JSON.stringify({ passed, score, issues }, null, 2))
+  console.log(`\n${errors.length} error(s), ${warnings.length} warning(s)`)
+  process.exitCode = errors.length > 0 ? 1 : 0
 }
 
-main()
-  .catch((error) => {
-    console.error('blog-audit failed:', error instanceof Error ? error.message : error)
-    process.exitCode = 1
-  })
-  .finally(async () => {
-    await disconnectDatabase()
-  })
+main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : error)
+  process.exit(2)
+})

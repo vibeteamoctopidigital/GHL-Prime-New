@@ -1,138 +1,128 @@
-# Blog Writer — AI blog publishing
+# AI Blog Writer + Scheduled Blogs
 
-Replaces the old Auto Blog / `blog-ai` feature (Supabase Storage,
-API-key-based providers, an in-process scheduler built for Vercel's lack of
-a persistent process). This version:
+The same feature as octopi-web-new's AI Blog Writer, on this stack: Express +
+Prisma/Postgres for the API and the watcher, Next.js (`ghlprime-updated`) for
+the two admin screens. Posts are written by **Claude Code on a subscription**
+— never a metered API key — in a session the watcher spawns on the machine
+that runs it.
 
-- Is Postgres/Prisma end to end — no Supabase anywhere.
-- Runs on your **Claude Code subscription**, never a metered API key. No
-  `ANTHROPIC_API_KEY` anywhere in this feature.
-- Is one long-running watcher process (`npm run blog:watch`), not a
-  cron-triggered HTTP endpoint.
-
-The `BlogAiSettings`/`BlogAiAccount`/`BlogAiRun`/`BlogAiDraft` tables from
-the old feature still exist in the database, untouched — dropping them is a
-separate, deliberate step (dump the data, confirm, then drop), not part of
-this change.
+The retired Auto Blog tables (`blog_ai_*`) are left untouched; dropping them
+is a separate, explicitly-confirmed step.
 
 ## How it fits together
 
-- **Admin screens** (`/admin/blog-writer`, `/admin/blog-schedules`) call
-  `/api/blog-writer/*` — plain REST, admin-JWT gated like every other
-  mutation in this app. The browser only ever inserts a `pending` row or
-  reads history; it never spawns anything.
-- **The watcher** (`scripts/blog-watch.ts`, run via `npm run blog:watch`) is
-  the only process that spawns `claude`. It polls for due work with a
-  single-flight `SELECT ... FOR UPDATE SKIP LOCKED` claim, so it's safe even
-  if a restart briefly overlaps two instances — Postgres won't let both
-  claim the same row.
-- **The spawned `claude -p` session** follows `.claude/commands/write-blog.md`
-  step by step, calling `scripts/blog-queue.ts`, `scripts/blog-audit.ts`,
-  and `scripts/blog-import.ts` (via its Bash tool access) to read/write
-  Postgres, audit its own draft, and source a cover image. Every phase
-  update the admin UI's phase list shows comes from these tool calls in
-  real time — not a timer.
+- **Admin screens** — `/admin/blog-writer` (the queue, defaults, "Write next
+  post" / "Write all", the run summary, recent runs, transfer-to-schedule) and
+  `/admin/blog-schedules` (daily alarms, each with its own keyword backlog or
+  its own list of news sites). They call `/api/blog-writer/*` and only ever
+  record an ask; the browser cannot write anything.
+- **The API** (`src/modules/blog-writer/`) — reads state, edits the queue and
+  schedules, inserts a `pending` request. Admin-JWT gated.
+- **The watcher** (`npm run blog:watch`, `scripts/blog-watch.ts`) — the one
+  long-running process. Heartbeats every 15s, polls every 30s, fires due
+  schedules, claims one request at a time (`FOR UPDATE SKIP LOCKED`), spawns
+  `claude -p` under a tool allowlist, reads the run's stream-json events into
+  the phase list the dashboard shows, and records the outcome and cost.
+- **The spawned session** follows `.claude/commands/write-blog.md`: reads the
+  writing standard (`npm run blog:rules`), reads the queue and the internal
+  links it may use (`npm run blog:queue`), researches with WebSearch/WebFetch,
+  writes `content/drafts/<slug>.json`, audits it (`npm run blog:audit`), and
+  imports it (`npm run blog:import`) — which fetches Pexels images onto
+  Cloudinary, checks every internal link resolves, decides draft vs.
+  published, saves the `blog_posts` row, and marks the topic done.
 
 ```
 admin screen --REST--> Express API --insert 'pending'--> blog_write_requests
                                                                 |
-                                                    blog-watch.ts polls,
-                                                    claims (FOR UPDATE SKIP LOCKED)
+                                       blog-watch.ts claims it, spawns `claude -p`
                                                                 |
-                                                  spawns `claude -p` (subscription)
+                write-blog.md: rules -> queue -> research -> write -> audit -> import
                                                                 |
-                                    write-blog.md: rules -> research -> write ->
-                                    audit -> image -> save (all via blog-queue.ts)
-                                                                |
-                                                degrees blog_posts row
-                                          (published, if auto-publish + audit pass;
-                                                draft otherwise)
+                                     blog_posts row (published only if auto-publish
+                                     is on AND the audit is clean AND every internal
+                                     link resolves; a draft otherwise)
 ```
+
+A **batch** ("Write all", or a schedule's day) is a chain of single-post runs
+sharing an id — the watcher queues the next topic when one finishes, until the
+queue runs dry, the announced total is reached, or Stop clears the switch.
+Stop never interrupts a post mid-write.
+
+## Tables
+
+| Table | What |
+|---|---|
+| `blog_topics` | The queue. `kind` is keyword / link / site; `status` queued / done / skipped; per-topic overrides for images, words, CTA (null = inherit). |
+| `blog_write_requests` | One row per run: status, phase + steps timeline, failure kind, attempts/retry_after, batch id/total, usage (tokens, cost). |
+| `blog_run_schedules` | Alarms: mode (`queue` / `sources`), time + IANA timezone, posts per day, images/words/CTA, `sites` JSON (with per-site `lastScan`), `last_run_day`. |
+| `blog_schedule_keywords` | A schedule's keyword backlog, ordered by `position`; consumed from the front each morning. |
+| `blog_deleted_schedules` | Snapshot of a deleted schedule, pruned after 7 days by the watcher. |
+| `blog_writer_settings` | Key/value: queue defaults, auto-publish, active batch, summary cleared-at, writer heartbeat, pinned CTA. |
+
+`blog_posts` gained `cover_image_alt`; its other writer columns
+(`target_keyword`, `cta_variant`, `sources`, `research_mode`, `source_url`,
+`source_name`, `topic_id`) were already there.
 
 ## 1. Prerequisites on the host
 
-- Node.js and this repo already installed (`npm install`).
-- `@anthropic-ai/claude-code` is already a project dependency (see
-  `package.json`) — `npm install` alone puts a working `claude` binary at
-  `node_modules/.bin/claude`. No separate global install needed on a fresh
-  host, unlike the original Supabase-era doc this replaces.
+- Node 22+, this repo, `npm install`. `@anthropic-ai/claude-code` is a
+  dependency, so `node_modules/.bin/claude` exists after install.
+- Outbound internet (research, Pexels, Cloudinary, Postgres).
 
-## 2. Log in to Claude Code — do this on the real host, interactively
+## 2. Log in to Claude Code — on the real host, as the user that runs the watcher
 
-```bash
-node_modules/.bin/claude auth login    # interactive: prints a URL + code
-# on a truly headless box:
-node_modules/.bin/claude setup-token
-node_modules/.bin/claude auth status   # confirm it took
-```
-
-**Smoke-test unattended execution before anything else:**
+Either from the dashboard (`/admin/claude-auth`, which drives
+`claude setup-token` for you) or by hand:
 
 ```bash
-node_modules/.bin/claude -p "Reply with exactly: OK"
+node_modules/.bin/claude setup-token   # headless: prints a URL + code
+node_modules/.bin/claude auth status
+node_modules/.bin/claude -p "Reply with exactly: OK"   # must print OK, exit 0
 ```
 
-You should get `OK` and exit code 0. **If this fails, stop here** — nothing
-below will work until it passes. Run the watcher as the SAME OS user that
-did this login; Claude Code's credentials live in that user's home
-directory.
+If that last line fails, stop — nothing below works until it passes.
 
-`blog-watch.ts` resolves the binary in this order: `CLAUDE_BIN` (explicit
-override) → this project's own `node_modules/.bin/claude` → `~/.local/bin/claude`
-→ bare `claude` on `PATH`.
+`blog-watch.ts` resolves the binary as: `CLAUDE_BIN` → this project's bundled
+copy (`claude.exe` on Windows, `.bin/claude` elsewhere) → `~/.local/bin/claude`
+→ `PATH` → the VS Code extension's bundled binary.
 
-## 3. Environment variables
+## 3. Environment
 
-Already-existing vars this feature reuses as-is: `DATABASE_URL`,
-`CLOUDINARY_CLOUD_NAME`/`CLOUDINARY_API_KEY`/`CLOUDINARY_API_SECRET`/
-`CLOUDINARY_UPLOAD_FOLDER`. New ones (all optional — see `.env.example`):
+Reuses `DATABASE_URL` and the `CLOUDINARY_*` vars. Optional additions:
 
 ```env
-PEXELS_API_KEY=            # stock photos for blog:import; without either
-UNSPLASH_ACCESS_KEY=       # key, posts simply get no cover image
-BLOG_WRITER_MODEL=sonnet
-# CLAUDE_BIN=/path/to/claude   # only if the resolution order above doesn't find it
+PEXELS_API_KEY=            # cover + body photos; without it posts get no images
+BLOG_WRITER_MODEL=sonnet   # the writing session's model (the headline ranker always uses haiku)
+# CLAUDE_BIN=/path/to/claude
 ```
 
-## 4. Apply the schema
+## 4. Schema
 
-**Not done yet in this session** — `DATABASE_URL` in `.env` failed
-authentication when this was built, so the schema below is written and
-`prisma validate`-clean but not pushed anywhere. Once you have a working
-connection string:
+Applied to the live database by `prisma/migrations/20260918150000_blog_writer_v2`.
+On a fresh database: `npx prisma migrate deploy`.
+
+## 5. Run the watcher
 
 ```bash
-npx prisma db push
+npm run blog:watch
 ```
 
-This is purely additive: 5 new tables (`blog_topics`, `blog_write_requests`,
-`blog_run_schedules`, `blog_deleted_schedules`, `blog_writer_settings`) and
-7 new optional columns on `blog_posts` (`target_keyword`, `cta_variant`,
-`sources`, `research_mode`, `source_url`, `source_name`, `topic_id`). No
-existing table, column, or row is modified. Take a backup first regardless
-(`pg_dump`) if this is ever pointed at real production data — this repo's
-own standing rule, not new to this feature.
-
-## 5. systemd service
-
-`/etc/systemd/system/ghlprime-blog-writer.service` — named specifically to
-avoid a collision with any other app's generic `blog-writer.service` on a
-shared box:
+It prints the binary it found, the model, and every schedule with its next
+firing. Under systemd (`/etc/systemd/system/ghlprime-blog-writer.service`):
 
 ```ini
 [Unit]
-Description=GHL Prime Blog Writer watcher
+Description=GHL Prime AI blog writer watcher
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=YOUR_APP_USER
-WorkingDirectory=/path/to/GHL-Prime-Backend
+WorkingDirectory=/path/to/GHL-Prime-New
 ExecStart=/usr/bin/npm run blog:watch
 Restart=always
 RestartSec=15
-# Claude Code reads its login from this user's home directory.
 Environment=HOME=/home/YOUR_APP_USER
 StandardOutput=append:/var/log/ghlprime-blog-writer.log
 StandardError=append:/var/log/ghlprime-blog-writer.log
@@ -141,71 +131,84 @@ StandardError=append:/var/log/ghlprime-blog-writer.log
 WantedBy=multi-user.target
 ```
 
-```bash
-sudo touch /var/log/ghlprime-blog-writer.log && sudo chown YOUR_APP_USER /var/log/ghlprime-blog-writer.log
-sudo systemctl daemon-reload
-sudo systemctl enable --now ghlprime-blog-writer
-sudo systemctl status ghlprime-blog-writer
-tail -f /var/log/ghlprime-blog-writer.log
-```
-
-Restart the service (`systemctl restart`) rather than stop-then-start — a
-restart is handled like any other interruption (see the table below).
+Same OS user as the Claude login. Restart rather than stop-then-start: on
+start the watcher parks anything left `running` as `waiting` and picks it up.
+**One watcher per database.**
 
 ## 6. Verify end to end
 
-1. `/admin/blog-writer` — the badge should read **Online** within ~30s
-   (heartbeat every 15s, offline after 2 minutes with none).
-2. Add a topic, or type something into "Write something right now."
-3. The run's phase list advances as the writer actually calls tools —
-   reading the standard → researching → writing → auditing → images →
-   saving. Not a timer.
-4. `tail -f /var/log/ghlprime-blog-writer.log` — expect `picked up request`
-   within ~20s, then the phases, then `request ... done`.
-5. `/admin/blog` — the post is at the top, published or draft depending on
-   the audit result and the auto-publish setting.
+1. `/admin/blog-writer` shows **Writer online** within ~30s.
+2. Add a topic and press **Write next post**. The card's phase list advances
+   as the session actually calls tools: standard → research (N sources read)
+   → writing (the draft filename) → audit (errors/warnings) → images → saving.
+3. The log shows `picked up request …`, the phases, the cost line, and
+   `request … done`.
+4. `/admin/blog` lists the post at the top as a draft (or published, if
+   auto-publish is on and the audit and link check passed). The run summary
+   on the writer screen links to it.
 
 ## What happens when things go wrong
 
 | Situation | What the watcher does |
 |---|---|
-| Claude usage limit hit | Parked **waiting** with a `retry_after` (the message's own reset time if parseable, else 15→30→60min backoff), resumes automatically. Up to `max_retries` (default 6) attempts. Shown as "Paused," not failed. |
-| Run exceeds `run_timeout_minutes` (default 25) | Same: waiting + retry. |
-| Nothing worth writing / the session errors out | Request **failed**, topic **skipped** with a reason, queue moves on. Retry from the screen re-queues it. |
-| Watcher restarted mid-run | Whatever was left `running` is parked `waiting` on the next start, picked up on the next poll. |
-| A batch ("write next post" repeatedly, or a schedule's `posts_per_run`) | One request at a time, chained without waiting a full poll between them. Stop finishes the current post, then the chain ends. |
-| Schedule due while the machine was off | Fires if under 6 hours late, otherwise writes the day off. Never fires twice in a day. |
+| Claude usage limit hit | Request parked **waiting** with `retry_after` (the message's own reset time if it states one, else 15 → 30 → 60 min backoff). Shown as "Paused, will continue on its own". Up to 6 automatic retries. |
+| Run exceeds 25 minutes | Same: waiting + retry. |
+| Session says nothing worth writing / breaks on the topic | Request **failed**, topic **skipped** with the reason; the batch moves on. Retry from the screen re-queues both. |
+| Session exits cleanly without saving a post | Failure kind `no-post`: failed + skipped, never silently re-picked (the bug the odl-32 fix closed). |
+| Watcher restarted mid-run | The `running` row is parked `waiting` on the next start and picked up on the next poll. |
+| Stop pressed during a batch | The current post finishes; nothing after it starts; a schedule's unwritten keywords go back to the FRONT of its list. |
+| Schedule due while the machine was off | Fires if under 6 hours late, otherwise writes the day off. Never twice in a day. |
+| A schedule's sites yield fewer stories than asked | Every enabled site is read; headlines are dealt fairly across sites (max 12 each) and ranked a page of 80 at a time until the day's count is met or the pool runs out. Each site's row shows what the last scan found / showed / picked. |
 
-## Known, deliberate differences from a from-scratch design
+## Where things live
 
-- **Drafts have no separate table.** The old `blog_ai_drafts`
-  propose-then-approve flow is gone — a Blog Writer draft is just a
-  `blog_posts` row with `published: false`. The existing `/admin/blog` page
-  already lists and can publish/unpublish these; no separate review screen
-  was built.
-- **The CLI scripts are TypeScript run via `tsx`** (`blog-queue.ts`,
-  `blog-audit.ts`, `blog-import.ts`, `blog-rules.ts`, `blog-watch.ts`), not
-  plain `.mjs`. This matches how every other script in this backend already
-  works (`seed.ts`, `refresh-sitemap.ts`) and lets them share Prisma types
-  and `src/config`/`src/shared` utilities directly.
-- **Sitemap refresh is a direct in-process function call**
-  (`sitemapService.refresh()` from `blog-queue.ts`'s `save` command), not an
-  HTTP call to a token-gated endpoint — both live in the same backend
-  process, so there's no network hop or token to manage for this.
-- **Mounted at `/api/blog-writer`**, not `/api/admin/blog-writer` — matches
-  how every other module in `src/routes/index.ts` is actually mounted here
-  (admin-only access is enforced by middleware inside the router, not by an
-  `/admin/` path prefix).
+| Piece | Path |
+|---|---|
+| Pure rules shared by API, scripts (and mirrored in the dashboard) | `src/modules/blog-writer/lib/rules.ts`, `cta-variants.ts`, `run-schedule.ts` |
+| Writing standard the session reads | `src/modules/blog-writer/lib/writing-standard.ts` (printed by `npm run blog:rules`) |
+| Story picker criteria (sources schedules + site topics) | `src/modules/blog-writer/lib/story-picker-prompt.ts` |
+| Audit | `src/modules/blog-writer/lib/audit.ts` |
+| Headline discovery (feeds + scraping) | `src/modules/blog-writer/lib/headlines.ts` |
+| Google Sheets calendar import | `src/modules/blog-writer/lib/sheet-import.ts` |
+| Image placement, CTA slot | `src/modules/blog-writer/lib/image-placement.ts`, `stock-photo.ts` |
+| Run event → phase tracker | `src/modules/blog-writer/lib/run-progress.ts` |
+| Internal-link allow-list (static routes + services) | `src/modules/blog-writer/lib/site.ts` |
+| DB helpers shared by API + scripts | `src/modules/blog-writer/blogWriter.store.ts` |
+| API | `src/modules/blog-writer/blogWriter.{routes,service,validators}.ts` |
+| Scripts | `scripts/blog-watch.ts`, `blog-queue.ts`, `blog-rules.ts`, `blog-audit.ts`, `blog-import.ts` |
+| Workflow the spawned session follows | `.claude/commands/write-blog.md` |
+| Drafts (git-ignored) | `content/drafts/*.json`, imported ones under `content/drafts/imported/` |
+| Admin screens (ghlprime-updated) | `src/pages/AdminBlogWriterPage.jsx`, `AdminBlogSchedulePage.jsx`, `src/components/blogWriter/`, `src/lib/blogWriterApi.js`, `src/lib/blogWriterRules.js`, `src/styles/blog-writer.css` |
+| Public post rendering of the CTA slot + sources | `ghlprime-updated/src/lib/blogContentSplit.js`, `src/pages/BlogPostPage.jsx` |
 
-## Not yet verified against a real run
+## Differences from octopi, on purpose
 
-Everything above compiles, typechecks, and builds cleanly, but has not run
-against a real `claude` CLI session end to end (blocked on the `DATABASE_URL`
-credential issue at build time). Two things worth a specific look once you
-can run it for real:
+- Postgres/Prisma instead of Mongo: schedule keywords are their own table
+  (paged and counted in SQL); everything else maps one to one.
+- CTA banners are GHL Prime's copy variants (`general`, `automation`,
+  `support`, `ai_agents`, `none`, plus `random`), picked from a dropdown; the
+  site's `BlogCtaBanner` renders them at the slot the writer chose.
+- Every post carries a `category` from the blog's fixed list; the writer picks
+  it and the audit/importer enforce it.
+- Sources are stored as JSON and rendered by the post page as a fold — no
+  `<h2>Sources</h2>` trailer is appended to the body.
+- Internal links resolve against a static route list plus `case_studies` and
+  `blog_posts` (the frontend is a separate repo, so its routes cannot be read
+  off disk).
+- Deleted-schedule snapshots expire via the watcher's startup prune, not a
+  TTL index.
 
-1. **The `--allowedTools` flag name** in `blog-watch.ts`'s `runClaudeSession()`
-   — confirm it matches `claude --help` for your installed CLI version.
-2. **`detectUsageLimit()`'s regex** in `blog-watch.ts` — written from the
-   general shape a usage-limit message takes, not a captured real one. Worth
-   logging one real hit's raw text and refining the pattern against it.
+## Verified / not yet verified
+
+Verified on this branch: typecheck + lint on both repos; the schema migration
+applied; every API flow (defaults, topics, bulk, reorder, overrides, apply,
+schedules, keywords paging, sites validation, transfer, delete-returns-keywords,
+request refused while offline) via a smoke script; the watcher heartbeating
+and the dashboard showing it online; both admin screens rendering and
+mutating through the real API; `claude -p` accepting the exact flags the
+watcher uses.
+
+Not yet run on this branch: a complete `pending → draft` post through the
+watcher (to be done by hand — it spends subscription usage), a scheduled
+`sources` scan against real feeds, and `blog:import` with `PEXELS_API_KEY`
+set.

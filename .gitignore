@@ -1,6 +1,4 @@
 node_modules/
-.env
-.env.*
 !.env.example
 dist/
 build/
@@ -11,9 +9,13 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 .idea/
-.vscode/
 prisma/*.db
 prisma/*.db-journal
 .routes.json
 
 
+
+# Blog Writer drafts: the JSON a session writes before importing. Imported ones are kept under imported/.
+content/drafts/*.json
+content/drafts/imported/
+config.bat

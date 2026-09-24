@@ -36,7 +36,7 @@ const routes: RouteDefinition[] = [
   { path: '/dashboard', router: dashboardRoutes, description: 'Admin dashboard counts and recent activity' },
   { path: '/case-studies', router: caseStudyRoutes, description: 'Case studies and team credits' },
   { path: '/blog', router: blogRoutes, description: 'Blog posts, categories and related posts' },
-  { path: '/blog-writer', router: blogWriterRoutes, description: 'Blog Writer: topic queue, schedules and run history for the CLI-subscription-based writer' },
+  { path: '/blog-writer', router: blogWriterRoutes, description: 'AI Blog Writer: topic queue, batches, schedules and run history for the Claude-Code-subscription writer' },
   { path: '/claude-auth', router: claudeAuthRoutes, description: 'Claude account manager: status, dashboard-driven login (setup-token), logout for the Blog Writer CLI' },
   { path: '/team', router: teamRoutes, description: 'Leadership profiles and "Meet The Experts"' },
   { path: '/gallery', router: galleryRoutes, description: 'Gallery categories and images' },
