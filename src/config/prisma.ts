@@ -1,5 +1,11 @@
+import { existsSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '@prisma/client'
+import dotenv from 'dotenv'
+import logger from '../shared/utils/logger.js'
+
 // Load .env BEFORE the pg adapter below reads process.env.DATABASE_URL.
 // This file used to rely on its importer importing config/env.js first, but
 // ES module imports are hoisted: seed.ts, blog-watch.ts and the other
@@ -7,9 +13,28 @@ import { PrismaClient } from '@prisma/client'
 // constructed with DATABASE_URL undefined and every standalone script died
 // with "SASL: client password must be a string". dotenv is idempotent, so
 // the server's own env.js import is unaffected.
-import dotenv from 'dotenv'
-dotenv.config({ path: new URL('../../.env', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1') })
-import logger from '../shared/utils/logger.js'
+/**
+ * Walks up from this module until it finds a .env, the same way env.ts finds
+ * the package root. A fixed '../../' would land in `dist/` once compiled, and
+ * `new URL(...).pathname` percent-encodes spaces — which silently left the
+ * adapter with an undefined DATABASE_URL on any project path containing one.
+ */
+function findEnvFile(startDir: string): string | undefined {
+  let dir = startDir
+
+  for (let depth = 0; depth < 8; depth += 1) {
+    const candidate = path.join(dir, '.env')
+    if (existsSync(candidate)) return candidate
+
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+
+  return undefined
+}
+
+dotenv.config({ path: findEnvFile(path.dirname(fileURLToPath(import.meta.url))) })
 
 /**
  * Prisma Client, connected via the @prisma/adapter-pg driver adapter —
